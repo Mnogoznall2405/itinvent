@@ -190,8 +190,8 @@ async def show_model_suggestions(
     suggestions_key: str
 ) -> bool:
     """
-    Показывает подсказки для модели оборудования
-    
+    Показывает подсказки для модели оборудования с улучшенным поиском по частям слов
+
     Параметры:
         update: Объект обновления от Telegram API
         context: Контекст выполнения
@@ -199,45 +199,101 @@ async def show_model_suggestions(
         mode: Режим работы
         pending_key: Ключ для временного хранения
         suggestions_key: Ключ для хранения подсказок
-        
+
     Возвращает:
         bool: True если подсказки показаны
     """
     from bot.services.suggestions import get_model_suggestions
     from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-    
+
     context.user_data[pending_key] = model_name
-    
-    if len(model_name) >= 2:
+
+    if len(model_name.strip()) >= 2:
         try:
             user_id = update.effective_user.id
             suggestions = get_model_suggestions(model_name, user_id)
-            
+
             if suggestions:
                 context.user_data[suggestions_key] = suggestions
-                
-                # Создаем клавиатуру
+
+                # Улучшенное форматирование клавиатуры
                 keyboard = []
                 for idx, model in enumerate(suggestions):
+                    # Обрезаем слишком длинные названия для кнопок
+                    display_model = model[:40] + "..." if len(model) > 40 else model
+
+                    # Определяем иконку в зависимости от типа устройства
+                    icon = "🖨️" if any(keyword in model.lower() for keyword in ['printer', 'принтер', 'hp', 'canon', 'xerox', 'brother']) else "🖥️"
+                    if any(keyword in model.lower() for keyword in ['laptop', 'ноутбук', 'notebook']):
+                        icon = "💻"
+                    elif any(keyword in model.lower() for keyword in ['monitor', 'монитор']):
+                        icon = "🖥️"
+                    elif any(keyword in model.lower() for keyword in ['scanner', 'сканер']):
+                        icon = "📷"
+                    elif any(keyword in model.lower() for keyword in ['mfp', 'mfc', 'муфта']):
+                        icon = "📠"
+
                     keyboard.append([InlineKeyboardButton(
-                        f"🔧 {model}",
+                        f"{icon} {display_model}",
                         callback_data=f"{mode}_model:{idx}"
                     )])
-                
-                keyboard.append([InlineKeyboardButton(
-                    "⌨️ Ввести как есть",
-                    callback_data=f"{mode}_model:manual"
-                )])
-                
+
+                # Добавляем опции ручного ввода
+                keyboard.extend([
+                    [InlineKeyboardButton(
+                        "⌨️ Ввести как есть",
+                        callback_data=f"{mode}_model:manual"
+                    )],
+                    [InlineKeyboardButton(
+                        "🔄 Другие варианты",
+                        callback_data=f"{mode}_model:refresh"
+                    )]
+                ])
+
                 reply_markup = InlineKeyboardMarkup(keyboard)
+
+                # Улучшенное сообщение с информацией о поиске
+                search_info = []
+                if len(model_name.split()) > 1:
+                    search_info.append(f"по словам: {' + '.join(model_name.split())}")
+                search_info.append(f"всего найдено: {len(suggestions)}")
+
                 await update.message.reply_text(
-                    "🔎 Найдены совпадения по моделям. Выберите из списка или нажмите 'Ввести как есть'.",
+                    f"🔎 <b>Найдены модели</b> по запросу <code>{model_name}</code>\n"
+                    f"📊 {' | '.join(search_info)}\n\n"
+                    f"Выберите из списка или введите вручную:",
+                    parse_mode='HTML',
                     reply_markup=reply_markup
                 )
                 return True
+            else:
+                # Если ничего не найдено, предлагаем альтернативы
+                keyboard = [
+                    [InlineKeyboardButton(
+                        "⌨️ Ввести как есть",
+                        callback_data=f"{mode}_model:manual"
+                    )],
+                    [InlineKeyboardButton(
+                        "🔄 Попробовать другой поиск",
+                        callback_data=f"{mode}_model:refresh"
+                    )]
+                ]
+
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await update.message.reply_text(
+                    f"❌ По запросу <code>{model_name}</code> ничего не найдено\n\n"
+                    f"💡 Попробуйте:\n"
+                    f"• Ввести только часть названия (например: 'laser' или 'hp')\n"
+                    f"• Использовать другие ключевые слова\n"
+                    f"• Ввести название вручную",
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
+                )
+                return True
+
         except Exception as e:
             logger.error(f"Ошибка при получении подсказок моделей ({mode}): {e}")
-    
+
     return False
 
 

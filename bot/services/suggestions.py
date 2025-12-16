@@ -97,41 +97,107 @@ def get_employee_suggestions(query: str, user_id: int, limit: int = 8) -> List[s
 def get_model_suggestions(query: str, user_id: int, limit: int = 8) -> List[str]:
     """
     Возвращает список уникальных моделей по подстроке
-    
+
+    Улучшенный поиск:
+    - Разделяет запрос на слова и ищет по каждому
+    - Приоритет моделям, содержащим все слова из запроса
+    - Поддерживает поиск по части слова (минимум 2 символа)
+
     Параметры:
         query: Подстрока для поиска
         user_id: ID пользователя
         limit: Максимальное количество подсказок
-        
+
     Возвращает:
         List[str]: Список моделей оборудования
     """
+    logger.info(f"[SUGGESTIONS] Запрос подсказок моделей для '{query}', user_id={user_id}")
+
     try:
         user_db = database_manager.create_database_connection(user_id)
         if not user_db:
+            logger.warning(f"[SUGGESTIONS] Не удалось создать подключение к БД для user_id={user_id}")
             return []
-        
-        results = user_db.search_equipment(query)
+
+        # Для коротких запросов (< 3 символов) используем стандартный поиск
+        if len(query.strip()) < 3:
+            logger.info(f"[SUGGESTIONS] Короткий запрос '{query}', используем стандартный поиск")
+            results = user_db.search_equipment(query)
+        else:
+            # Для длинных запросов пробуем несколько стратегий поиска
+            all_results = []
+
+            # 1. Стандартный поиск по всему запросу
+            standard_results = user_db.search_equipment(query)
+            all_results.extend(standard_results)
+            logger.info(f"[SUGGESTIONS] Стандартный поиск нашел {len(standard_results)} результатов")
+
+            # 2. Поиск по отдельным словам из запроса
+            query_words = [w.strip() for w in query.split() if len(w.strip()) >= 2]
+            if len(query_words) > 1:
+                logger.info(f"[SUGGESTIONS] Поиск по отдельным словам: {query_words}")
+                for word in query_words:
+                    word_results = user_db.search_equipment(word)
+                    all_results.extend(word_results)
+                    logger.info(f"[SUGGESTIONS] Поиск по слову '{word}' нашел {len(word_results)} результатов")
+
+            results = all_results
+
     except Exception as e:
         logger.error(f"Ошибка получения подсказок моделей: {e}")
         return []
-    
+
     uniq = []
     seen = set()
     q = query.casefold()
-    
+    query_words = [w.strip() for w in q.split() if len(w.strip()) >= 2]
+
     for item in results:
         model = (item.get('model') or item.get('MODEL_NAME'))
-        if not model or model == 'Не указана':
+        if not model or model == 'Не указана' or len(model.strip()) < 3:
             continue
         if model not in seen:
             seen.add(model)
             uniq.append(model)
-    
-    starts = [m for m in uniq if m.casefold().startswith(q)]
-    contains = [m for m in uniq if not m.casefold().startswith(q) and q in m.casefold()]
-    
-    return (starts + contains)[:limit]
+
+    # Улучшенная сортировка с рейтингом релевантности
+    def calculate_relevance(model_name):
+        model_lower = model_name.casefold()
+        score = 0
+
+        # Максимальный балл если содержит весь запрос целиком
+        if q in model_lower:
+            score += 100
+        elif model_lower.startswith(q):
+            score += 90
+
+        # Баллы за совпадение отдельных слов
+        matched_words = sum(1 for word in query_words if word in model_lower)
+        score += matched_words * 20
+
+        # Дополнительные баллы за совпадение в начале слов модели
+        model_words = model_lower.split()
+        for query_word in query_words:
+            for model_word in model_words:
+                if model_word.startswith(query_word):
+                    score += 10
+                    break
+
+        # Штраф за слишком длинные модели при коротком запросе
+        if len(q) < 5 and len(model_name) > 30:
+            score -= 5
+
+        return score
+
+    # Сортируем по релевантности
+    scored_models = [(model, calculate_relevance(model)) for model in uniq]
+    scored_models.sort(key=lambda x: x[1], reverse=True)
+
+    # Возвращаем только названия моделей
+    result = [model for model, score in scored_models if score > 0][:limit]
+
+    logger.info(f"[SUGGESTIONS] Возвращаем {len(result)} подсказок моделей для '{query}'")
+    return result
 
 
 

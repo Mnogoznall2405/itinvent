@@ -811,6 +811,43 @@ async def handle_work_model_suggestion(update: Update, context: ContextTypes.DEF
             return States.WORK_CONFIRMATION
     
     elif data.startswith('work_model:'):
+        # Обработка кнопки обновления поиска
+        if data == 'work_model:refresh':
+            if work_type == 'cartridge':
+                pending = context.user_data.get('pending_work_printer_model', '').strip()
+                if pending:
+                    await query.edit_message_text(
+                        f"🔄 Обновляю поиск для: {pending}"
+                    )
+                    # Показываем обновленные подсказки
+                    try:
+                        from bot.handlers.suggestions_handler import show_model_suggestions
+                        if await show_model_suggestions(
+                            update, context, pending,
+                            mode='work',
+                            pending_key='pending_work_printer_model',
+                            suggestions_key='work_printer_model_suggestions'
+                        ):
+                            return States.WORK_PRINTER_MODEL_INPUT
+                    except Exception as e:
+                        logger.error(f"Ошибка при обновлении подсказок: {e}")
+            else:
+                pending = context.user_data.get('pending_work_equipment_model', '').strip()
+                if pending:
+                    await query.edit_message_text(
+                        f"🔄 Обновляю поиск для: {pending}"
+                    )
+                    try:
+                        from bot.handlers.suggestions_handler import show_model_suggestions
+                        if await show_model_suggestions(
+                            update, context, pending,
+                            mode='work',
+                            pending_key='pending_work_equipment_model',
+                            suggestions_key='work_equipment_model_suggestions'
+                        ):
+                            return States.WORK_EQUIPMENT_MODEL_INPUT
+                    except Exception as e:
+                        logger.error(f"Ошибка при обновлении подсказок: {e}")
         try:
             idx = int(data.split(':', 1)[1])
             
