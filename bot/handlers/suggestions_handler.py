@@ -187,7 +187,8 @@ async def show_model_suggestions(
     model_name: str,
     mode: str,
     pending_key: str,
-    suggestions_key: str
+    suggestions_key: str,
+    equipment_type: str = "printers_mfu"
 ) -> bool:
     """
     Показывает подсказки для модели оборудования с улучшенным поиском по частям слов
@@ -199,6 +200,7 @@ async def show_model_suggestions(
         mode: Режим работы
         pending_key: Ключ для временного хранения
         suggestions_key: Ключ для хранения подсказок
+        equipment_type: Тип оборудования ('printers', 'printers_mfu', или 'all')
 
     Возвращает:
         bool: True если подсказки показаны
@@ -211,7 +213,7 @@ async def show_model_suggestions(
     if len(model_name.strip()) >= 2:
         try:
             user_id = update.effective_user.id
-            suggestions = get_model_suggestions(model_name, user_id)
+            suggestions = get_model_suggestions(model_name, user_id, equipment_type=equipment_type)
 
             if suggestions:
                 context.user_data[suggestions_key] = suggestions

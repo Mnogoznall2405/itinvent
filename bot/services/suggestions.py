@@ -94,24 +94,63 @@ def get_employee_suggestions(query: str, user_id: int, limit: int = 8) -> List[s
     return final_result
 
 
-def get_model_suggestions(query: str, user_id: int, limit: int = 8) -> List[str]:
+def get_model_suggestions(query: str, user_id: int, limit: int = 8, equipment_type: str = "all") -> List[str]:
     """
-    Возвращает список уникальных моделей по подстроке
+    Возвращает список уникальных моделей по подстроке с фильтрацией по типу оборудования
 
     Улучшенный поиск:
     - Разделяет запрос на слова и ищет по каждому
     - Приоритет моделям, содержащим все слова из запроса
     - Поддерживает поиск по части слова (минимум 2 символа)
+    - Фильтрация по типу оборудования (принтеры, МФУ, или все)
 
     Параметры:
         query: Подстрока для поиска
         user_id: ID пользователя
         limit: Максимальное количество подсказок
+        equipment_type: Тип оборудования ('printers', 'printers_mfu', или 'all')
 
     Возвращает:
         List[str]: Список моделей оборудования
     """
-    logger.info(f"[SUGGESTIONS] Запрос подсказок моделей для '{query}', user_id={user_id}")
+    logger.info(f"[SUGGESTIONS] Запрос подсказок моделей для '{query}', user_id={user_id}, type={equipment_type}")
+
+    def is_printer_or_mfp(item: dict) -> bool:
+        """Проверяет, является ли оборудование принтером или МФУ"""
+        model = (item.get('model') or item.get('MODEL_NAME') or '').lower()
+        equipment_type_name = (item.get('equipment_type_name') or item.get('EQUIPMENT_TYPE_NAME') or '').lower()
+        serial_number = (item.get('serial_number') or item.get('SERIAL_NUMBER') or '').lower()
+        inventory_number = (item.get('inventory_number') or item.get('INVENTORY_NUMBER') or '').lower()
+
+        # Все поля для анализа
+        all_fields = f"{model} {equipment_type_name} {serial_number} {inventory_number}"
+
+        # Ключевые слова для принтеров и МФУ
+        printer_keywords = [
+            'printer', 'принтер', 'laserjet', 'laser', 'deskjet', 'officejet',
+            'color laserjet', 'hp ', 'canon', 'xerox', 'brother', 'samsung',
+            'kyocera', 'epson', 'ricoh', 'lexmark', 'panasonic', 'sharp',
+            'mf', 'mfc', 'mfp', 'муфта', 'scan', 'copy', 'print',
+            'versalink', 'workcentre', 'i-sensys', 'imageclass'
+        ]
+
+        mfp_keywords = [
+            'mfp', 'mfc', 'муфта', 'multifunction', 'all-in-one', 'aio',
+            'workcentre', 'imageclass', 'maxify'
+        ]
+
+        # Проверяем наличие ключевых слов
+        is_printer_related = any(keyword in all_fields for keyword in printer_keywords)
+
+        if equipment_type == 'printers':
+            # Только принтеры (не МФУ)
+            return is_printer_related and not any(keyword in all_fields for keyword in mfp_keywords)
+        elif equipment_type == 'printers_mfu':
+            # Принтеры и МФУ
+            return is_printer_related
+        else:
+            # Все типы оборудования
+            return True
 
     try:
         user_db = database_manager.create_database_connection(user_id)
@@ -147,12 +186,16 @@ def get_model_suggestions(query: str, user_id: int, limit: int = 8) -> List[str]
         logger.error(f"Ошибка получения подсказок моделей: {e}")
         return []
 
+    # Фильтруем результаты по типу оборудования
+    filtered_results = [item for item in results if is_printer_or_mfp(item)]
+    logger.info(f"[SUGGESTIONS] После фильтрации ({equipment_type}): {len(filtered_results)} из {len(results)}")
+
     uniq = []
     seen = set()
     q = query.casefold()
     query_words = [w.strip() for w in q.split() if len(w.strip()) >= 2]
 
-    for item in results:
+    for item in filtered_results:
         model = (item.get('model') or item.get('MODEL_NAME'))
         if not model or model == 'Не указана' or len(model.strip()) < 3:
             continue

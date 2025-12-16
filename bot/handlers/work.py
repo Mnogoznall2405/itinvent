@@ -198,7 +198,8 @@ async def work_printer_model_input(update: Update, context: ContextTypes.DEFAULT
             update, context, model,
             mode='work',
             pending_key='pending_work_printer_model',
-            suggestions_key='work_printer_model_suggestions'
+            suggestions_key='work_printer_model_suggestions',
+            equipment_type='printers_mfu'
         ):
             return States.WORK_PRINTER_MODEL_INPUT
     except Exception as e:
@@ -312,7 +313,8 @@ async def work_equipment_model_input(update: Update, context: ContextTypes.DEFAU
             update, context, model,
             mode='work',
             pending_key='pending_work_equipment_model',
-            suggestions_key='work_equipment_model_suggestions'
+            suggestions_key='work_equipment_model_suggestions',
+            equipment_type='all'
         ):
             return States.WORK_EQUIPMENT_MODEL_INPUT
     except Exception as e:
@@ -826,7 +828,8 @@ async def handle_work_model_suggestion(update: Update, context: ContextTypes.DEF
                             update, context, pending,
                             mode='work',
                             pending_key='pending_work_printer_model',
-                            suggestions_key='work_printer_model_suggestions'
+                            suggestions_key='work_printer_model_suggestions',
+                            equipment_type='printers_mfu'
                         ):
                             return States.WORK_PRINTER_MODEL_INPUT
                     except Exception as e:
@@ -843,7 +846,8 @@ async def handle_work_model_suggestion(update: Update, context: ContextTypes.DEF
                             update, context, pending,
                             mode='work',
                             pending_key='pending_work_equipment_model',
-                            suggestions_key='work_equipment_model_suggestions'
+                            suggestions_key='work_equipment_model_suggestions',
+                            equipment_type='all'
                         ):
                             return States.WORK_EQUIPMENT_MODEL_INPUT
                     except Exception as e:
