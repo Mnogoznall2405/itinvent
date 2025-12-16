@@ -94,3 +94,11 @@ data/*.sqlite3
 
 # Kiro
 .kiro/
+
+# Test files
+test_*.py
+test_*.bat
+*_test.py
+*_test.bat
+quick_test.py
+temp_test_*.py
