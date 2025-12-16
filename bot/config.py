@@ -30,6 +30,7 @@ class APIConfig:
     openrouter_api_key: str
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     ocr_model: str = "qwen/qwen3-vl-8b-instruct"
+    cartridge_analysis_model: str = "anthropic/claude-3.5-sonnet"
 
 
 @dataclass
@@ -157,9 +158,11 @@ def load_config() -> AppConfig:
     openrouter_key = os.getenv("OPENROUTER_API_KEY")
     if not openrouter_key:
         raise ValueError("OPENROUTER_API_KEY не установлен в .env")
-    
+
     api_config = APIConfig(
-        openrouter_api_key=openrouter_key
+        openrouter_api_key=openrouter_key,
+        ocr_model=os.getenv("OCR_MODEL", "qwen/qwen3-vl-8b-instruct"),
+        cartridge_analysis_model=os.getenv("CARTRIDGE_ANALYSIS_MODEL", "google/gemini-2.5-flash")
     )
     
     # Database конфигурация
