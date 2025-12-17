@@ -123,10 +123,12 @@ def register_handlers(application: Application) -> None:
         work_branch_input,
         work_location_input,
         work_printer_model_input,
+        work_component_input,
         work_equipment_type_input,
         work_equipment_model_input,
         handle_printer_type_selection,
         handle_cartridge_color,
+        handle_component_selection,
         handle_work_confirmation,
         handle_work_branch_suggestion,
         handle_work_location_suggestion,
@@ -415,6 +417,10 @@ def register_handlers(application: Application) -> None:
             States.WORK_PRINTER_MODEL_INPUT: [
                 CallbackQueryHandler(handle_work_model_suggestion, pattern="^work_model:"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, work_printer_model_input)
+            ],
+            States.WORK_COMPONENT_SELECTION: [
+                CallbackQueryHandler(handle_component_selection, pattern="^component:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, work_component_input)
             ],
             States.WORK_CARTRIDGE_COLOR_SELECTION: [
                 CallbackQueryHandler(handle_printer_type_selection, pattern="^printer_type:"),

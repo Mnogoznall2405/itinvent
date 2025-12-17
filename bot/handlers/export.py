@@ -39,7 +39,7 @@ async def show_export_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     keyboard = [
         [InlineKeyboardButton("📦 Экспорт ненайденного оборудования", callback_data="export_type:unfound")],
         [InlineKeyboardButton("🔄 Экспорт перемещений", callback_data="export_type:transfers")],
-        [InlineKeyboardButton("🖨️ Экспорт замен картриджей", callback_data="export_type:cartridges")],
+        [InlineKeyboardButton("🔧 Экспорт замен комплектующих", callback_data="export_type:cartridges")],
         [InlineKeyboardButton("📦 Экспорт установок оборудования", callback_data="export_type:installations")],
         [InlineKeyboardButton("🔙 Назад в главное меню", callback_data="back_to_main")]
     ]
@@ -127,7 +127,7 @@ async def show_export_period(update: Update, context: ContextTypes.DEFAULT_TYPE)
     type_names = {
         'unfound': 'ненайденного оборудования',
         'transfers': 'перемещений',
-        'cartridges': 'замен картриджей',
+        'cartridges': 'замен комплектующих',
         'installations': 'установок оборудования'
     }
     type_name = type_names.get(export_type, 'данных')
@@ -180,7 +180,7 @@ async def handle_export_period(update: Update, context: ContextTypes.DEFAULT_TYP
         keyboard = [
             [InlineKeyboardButton("📦 Экспорт ненайденного оборудования", callback_data="export_type:unfound")],
             [InlineKeyboardButton("🔄 Экспорт перемещений", callback_data="export_type:transfers")],
-            [InlineKeyboardButton("🖨️ Экспорт замен картриджей", callback_data="export_type:cartridges")],
+            [InlineKeyboardButton("🔧 Экспорт замен комплектующих", callback_data="export_type:cartridges")],
             [InlineKeyboardButton("📦 Экспорт установок оборудования", callback_data="export_type:installations")],
             [InlineKeyboardButton("🔙 Назад в главное меню", callback_data="back_to_main")]
         ]
@@ -211,11 +211,11 @@ async def handle_cartridge_export_directly(update: Update, context: ContextTypes
         int: Следующее состояние
     """
     query = update.callback_query
-    await query.edit_message_text("⏳ Анализ данных о заменах картриджей...")
+    await query.edit_message_text("⏳ Анализ данных о заменах комплектующих...")
 
     try:
         # Выполняем экспорт с LLM-структурированием
-        excel_file = await export_cartridges_to_excel_structured(period=period, db_filter=None)
+        excel_file = await export_components_to_excel_structured(period=period, db_filter=None)
 
         if excel_file and os.path.exists(excel_file):
             context.user_data['export_file'] = excel_file
@@ -337,7 +337,7 @@ async def handle_export_database(update: Update, context: ContextTypes.DEFAULT_T
                     return ConversationHandler.END
             
             elif export_type == 'cartridges':
-                # Экспорт замен картриджей
+                # Экспорт замен комплектующих
                 excel_file = export_cartridges_to_excel(only_new=only_new, db_filter=db_filter)
                 
                 if excel_file and os.path.exists(excel_file):
@@ -544,12 +544,12 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 def export_cartridges_to_excel(only_new: bool = False, db_filter: str = None) -> str:
     """
-    Экспортирует замены картриджей в Excel
-    
+    Экспортирует замены комплектующих МФУ в Excel
+
     Параметры:
         only_new: Экспортировать только новые записи
         db_filter: Фильтр по базе данных (None = все базы)
-        
+
     Возвращает:
         str: Путь к созданному файлу
     """
@@ -588,25 +588,58 @@ def export_cartridges_to_excel(only_new: bool = False, db_filter: str = None) ->
         if 'timestamp' in df.columns:
             df['timestamp'] = pd.to_datetime(df['timestamp']).dt.strftime('%Y-%m-%d %H:%M:%S')
         
-        # Переименовываем колонки
-        column_names = {
-            'branch': 'Филиал',
-            'location': 'Локация',
-            'printer_model': 'Модель принтера',
-            'cartridge_color': 'Цвет картриджа',
-            'db_name': 'База данных',
-            'timestamp': 'Дата и время'
-        }
-        df = df.rename(columns=column_names)
-        
-        # Упорядочиваем колонки
-        desired_order = ['Дата и время', 'База данных', 'Филиал', 'Локация', 'Модель принтера', 'Цвет картриджа']
+        # Создаем отображаемые имена компонентов
+        def get_component_name(component_type):
+            names = {
+                'cartridge': 'Картридж',
+                'fuser': 'Фьюзер (печка)',
+                'drum': 'Фотобарабан',  # Обратная совместимость
+                'photoconductor': 'Фотобарабан',
+                'waste_toner': 'Контейнер отраб. тонера',
+                'transfer_belt': 'Трансферный ремень'
+            }
+            return names.get(component_type, component_type)
+
+        # Если есть component_type, используем новые поля
+        if 'component_type' in df.columns:
+            # Создаем колонку с отображаемыми именами компонентов
+            df['Компонент'] = df['component_type'].apply(get_component_name)
+
+            # Переименовываем колонки
+            column_names = {
+                'branch': 'Филиал',
+                'location': 'Локация',
+                'printer_model': 'Модель принтера',
+                'component_type': 'Тип компонента',
+                'component_color': 'Цвет',
+                'db_name': 'База данных',
+                'timestamp': 'Дата и время'
+            }
+            df = df.rename(columns=column_names)
+
+            # Упорядочиваем колонки для нового формата
+            desired_order = ['Дата и время', 'База данных', 'Филиал', 'Локация', 'Модель принтера', 'Тип компонента', 'Компонент', 'Цвет']
+        else:
+            # Старый формат для обратной совместимости
+            column_names = {
+                'branch': 'Филиал',
+                'location': 'Локация',
+                'printer_model': 'Модель принтера',
+                'cartridge_color': 'Цвет картриджа',
+                'db_name': 'База данных',
+                'timestamp': 'Дата и время'
+            }
+            df = df.rename(columns=column_names)
+
+            # Упорядочиваем колонки для старого формата
+            desired_order = ['Дата и время', 'База данных', 'Филиал', 'Локация', 'Модель принтера', 'Цвет картриджа']
+
         existing_cols = [col for col in desired_order if col in df.columns]
         df = df[existing_cols]
         
         # Создаем имя файла
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_file = f"exports/cartridge_replacements_{timestamp}.xlsx"
+        output_file = f"exports/component_replacements_{timestamp}.xlsx"
         
         # Создаем директорию если не существует
         Path("exports").mkdir(exist_ok=True)
@@ -614,11 +647,11 @@ def export_cartridges_to_excel(only_new: bool = False, db_filter: str = None) ->
         # Сохраняем в Excel
         df.to_excel(output_file, index=False, engine='openpyxl')
         
-        logger.info(f"Экспорт замен картриджей завершен: {output_file}")
+        logger.info(f"Экспорт замен комплектующих завершен: {output_file}")
         return output_file
         
     except Exception as e:
-        logger.error(f"Ошибка экспорта замен картриджей: {e}")
+        logger.error(f"Ошибка экспорта замен комплектующих: {e}")
         return None
 
 
@@ -702,12 +735,12 @@ def export_installations_to_excel(only_new: bool = False, db_filter: str = None)
         return None
 
 
-async def structure_cartridge_data_with_llm(data: list, period: str) -> dict:
+async def structure_component_data_with_llm(data: list, period: str) -> dict:
     """
-    Отправляет данные о картриджах в LLM для структурирования
+    Отправляет данные о заменах комплектующих в LLM для структурирования
 
     Параметры:
-        data: Список записей о заменах картриджей
+        data: Список записей о заменах комплектующих
         period: Период анализа
 
     Возвращает:
@@ -732,17 +765,18 @@ async def structure_cartridge_data_with_llm(data: list, period: str) -> dict:
 
         # Создаем промпт для LLM
         prompt = f"""
-Проанализируй данные о заменах картриджей {period_ru} и верни структурированный JSON ответ.
+Проанализируй данные о заменах комплектующих {period_ru} и верни структурированный JSON ответ.
 
 Важно:
 - Группируй данные по моделям принтеров внутри каждой локации
-- Для каждой записи замен картриджей определи, к какому принтеру она относится
-- Если в локации несколько одинаковых принтеров, считай их отдельно
-- Определи модель картриджа, совместимого с каждым принтером на основе его модели
-- Для принтеров HP LaserJet используй формат: HP XX (например, HP 05A, HP 88A)
-- Для принтеров Xerox используй формат: Xerox XXXX (например, Xerox 106R02773)
-- Для принтеров Canon используй формат: Canon XXX (например, Canon CRG-041)
-- Для цветных принтеров указывай полный комплект картриджей через запятую
+- Для каждой записи определи тип компонента: картридж, фьюзер, барабан и т.д.
+- Определи тип принтера: МФУ или обычный принтер
+- Определи модель совместимого компонента на основе модели принтера
+- Для картриджей используй точные модели: HP 05A, HP 88A, Xerox 106R02773, Canon CRG-041 и т.д.
+- Для фьюзеров используй модели: RM1-0045, RM1-6405, JC96, Xerox 115R00089 и т.д.
+- Для фотобарабанов (OPC) используй модели: DR420CL, DR421CL, Xerox 115R00090 и т.д.
+- Цвет компонента важен только для картриджей, для остальных компонентов укажи "Универсальный"
+- Если модель компонента неизвестна, укажи "Не определено"
 
 Данные:
 {data_summary}
@@ -750,39 +784,46 @@ async def structure_cartridge_data_with_llm(data: list, period: str) -> dict:
 Структурируй данные в следующем формате:
 {{
   "summary": {{
-    "total_cartridges": общее количество картриджей,
+    "total_components": общее количество замен компонентов,
     "period": "{period_ru}",
     "branches_count": количество филиалов,
+    "component_types": {{
+      "Картриджи": количество,
+      "Фьюзеры": количество,
+      "Фотобарабаны": количество,
+      "Прочее": количество
+    }},
     "colors": {{
       "Черный": количество,
       "Синий": количество,
       "Желтый": количество,
-      "Пурпурный": количество
+      "Пурпурный": количество,
+      "Универсальный": количество
     }}
   }},
   "branches": [
     {{
       "name": "Название филиала",
-      "cartridges_count": общее количество картриджей в филиале,
+      "components_count": общее количество компонентов в филиале,
       "locations": [
         {{
           "name": "Локация",
-          "cartridges": {{
-            "Черный": количество,
-            "Синий": количество,
-            "Желтый": количество,
-            "Пурпурный": количество
+          "components": {{
+            "Картриджи": {{"Черный": количество, "Синий": количество, "Желтый": количество, "Пурпурный": количество}},
+            "Фьюзеры": {{"Универсальный": количество}},
+            "Фотобарабаны": {{"Универсальный": количество}}
           }},
           "printers": [
             {{
               "model": "Модель принтера",
-              "cartridge_model": "Модель совместимого картриджа",
-              "cartridges_by_color": {{
-                "Черный": количество замен,
-                "Синий": количество замен,
-                "Желтый": количество замен,
-                "Пурпурный": количество замен
-              }}
+              "replacements": [
+                {{
+                  "component_type": "Картридж/Фьюзер/Фотобарабан",
+                  "component_color": "Цвет компонента",
+                  "count": количество замен,
+                  "compatible_models": ["Модель1", "Модель2"]
+                }}
+              ]
             }}
           ]
         }}
@@ -792,7 +833,7 @@ async def structure_cartridge_data_with_llm(data: list, period: str) -> dict:
   "top_printers": [
     {{
       "model": "Модель принтера",
-      "total_cartridges": общее количество картриджей
+      "total_components": общее количество компонентов
     }}
   ]
 }}
@@ -810,7 +851,7 @@ async def structure_cartridge_data_with_llm(data: list, period: str) -> dict:
         response = await client.chat.completions.create(
             model=config.api.cartridge_analysis_model,  # Модель из конфигурации
             messages=[
-                {"role": "system", "content": "Ты - аналитик данных. Структурируй данные о заменах картриджей в точном JSON формате."},
+                {"role": "system", "content": "Ты - аналитик данных. Структурируй данные о заменах компонентов (картриджи, фьюзеры, барабаны) в точном JSON формате."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1
@@ -894,9 +935,9 @@ def filter_data_by_period(data: list, period: str) -> list:
         return data
 
 
-async def export_cartridges_to_excel_structured(period: str = "all", db_filter: str = None) -> str:
+async def export_components_to_excel_structured(period: str = "all", db_filter: str = None) -> str:
     """
-    Экспортирует замены картриджей в Excel с LLM-структурированием
+    Экспортирует замены комплектующих в Excel с LLM-структурированием
 
     Параметры:
         period: Период экспорта (1month, 3months, all)
@@ -933,22 +974,22 @@ async def export_cartridges_to_excel_structured(period: str = "all", db_filter: 
             return None
 
         # Получаем структурированные данные от LLM
-        structured_data = await structure_cartridge_data_with_llm(data, period)
+        structured_data = await structure_component_data_with_llm(data, period)
 
         if "error" in structured_data:
             # Если LLM не сработал, создаем базовый отчет
-            return create_basic_cartridge_report(data, period)
+            return create_basic_component_report(data, period)
 
         # Создаем Excel с множественными страницами
-        return create_structured_cartridge_excel(structured_data, period)
+        return create_structured_component_excel(structured_data, period)
 
     except Exception as e:
-        logger.error(f"Ошибка экспорта структурированных замен картриджей: {e}")
+        logger.error(f"Ошибка экспорта структурированных замен комплектующих: {e}")
         # В случае ошибки создаем базовый отчет
-        return create_basic_cartridge_report(data, period)
+        return create_basic_component_report(data, period)
 
 
-def create_structured_cartridge_excel(structured_data: dict, period: str) -> str:
+def create_structured_component_excel(structured_data: dict, period: str) -> str:
     """
     Создает структурированный Excel файл
 
@@ -965,6 +1006,7 @@ def create_structured_cartridge_excel(structured_data: dict, period: str) -> str
     from openpyxl.styles import Font, Alignment, PatternFill
     from openpyxl.utils.dataframe import dataframe_to_rows
     import pandas as pd
+    from bot.services.printer_component_detector import component_detector
 
     try:
         # Создаем директорию если не существует
@@ -972,7 +1014,7 @@ def create_structured_cartridge_excel(structured_data: dict, period: str) -> str
 
         # Создаем имя файла
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_file = f"exports/cartridge_analysis_{timestamp}.xlsx"
+        output_file = f"exports/component_analysis_{timestamp}.xlsx"
 
         # Создаем workbook
         wb = Workbook()
@@ -993,7 +1035,7 @@ def create_structured_cartridge_excel(structured_data: dict, period: str) -> str
         # Сохраняем файл
         wb.save(output_file)
 
-        logger.info(f"Структурированный экспорт картриджей завершен: {output_file}")
+        logger.info(f"Структурированный экспорт комплектующих завершен: {output_file}")
         return output_file
 
     except Exception as e:
@@ -1012,7 +1054,7 @@ def create_summary_sheet(wb: Workbook, structured_data: dict, period: str):
     header_fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
 
     # Заголовок
-    ws['B2'] = f'АНАЛИТИЧЕСКИЙ ОТЧЕТ ЗАМЕН КАРТРИДЖЕЙ'
+    ws['B2'] = f'АНАЛИТИЧЕСКИЙ ОТЧЕТ ЗАМЕН КОМПЛЕКТУЮЩИХ'
     ws['B2'].font = title_font
     ws['B2'].alignment = Alignment(horizontal='center')
 
@@ -1031,8 +1073,8 @@ def create_summary_sheet(wb: Workbook, structured_data: dict, period: str):
     ws['B6'].fill = header_fill
 
     row += 1
-    ws[f'B{row}'] = 'Общее количество картриджей:'
-    ws[f'C{row}'] = summary.get('total_cartridges', 0)
+    ws[f'B{row}'] = 'Общее количество компонентов:'
+    ws[f'C{row}'] = summary.get('total_components', 0)
 
     row += 1
     ws[f'B{row}'] = 'Количество филиалов:'
@@ -1074,14 +1116,14 @@ def create_branch_sheet(wb: Workbook, branch: dict):
     ws['B2'] = f'ФИЛИАЛ: {branch_name}'
     ws['B2'].font = title_font
 
-    ws['B3'] = f'Всего картриджей: {branch.get("cartridges_count", 0)}'
+    ws['B3'] = f'Всего компонентов: {branch.get("components_count", 0)}'
     ws['B3'].font = Font(bold=True)
 
     # Начинаем таблицу с заголовками
     row = 6
 
     # Заголовки таблицы
-    headers = ['Локация', 'Модель принтера', 'Картридж', 'Черный', 'Синий', 'Желтый', 'Пурпурный', 'Всего']
+    headers = ['Локация', 'Модель принтера', 'Компонент', 'Совместимые модели', 'Черный', 'Синий', 'Желтый', 'Пурпурный', 'Универсальный', 'Всего']
     col = 2  # Начинаем с колонки B
 
     for header in headers:
@@ -1093,93 +1135,164 @@ def create_branch_sheet(wb: Workbook, branch: dict):
 
     row += 1
 
-    # Данные по локациям и принтерам
+    # Данные по локациям и компонентам
     for location in branch.get('locations', []):
         location_name = location.get('name', '')
+        components = location.get('components', {})
 
-        # Получаем принтеры в этой локации
-        printers = location.get('printers', [])
+        # Показываем общую статистику по компонентам в локации
+        cell = ws.cell(row=row, column=2, value=location_name)
+        cell.border = border
+        cell.font = Font(bold=True)
 
-        if printers:
-            # Если есть принтеры, создаем строки для каждого
-            for idx, printer in enumerate(printers):
-                printer_model = printer.get('model', '')
-                cartridge_model = printer.get('cartridge_model', '')
-                cartridges = printer.get('cartridges_by_color', {})
+        # Модель принтера (пусто для сводной строки)
+        cell = ws.cell(row=row, column=3, value='')
+        cell.border = border
 
-                # Локация (только для первой строки)
-                cell = ws.cell(row=row, column=2, value=location_name if idx == 0 else '')
-                cell.border = border
+        # Тип компонента (пусто для сводной строки)
+        cell = ws.cell(row=row, column=4, value='')
+        cell.border = border
 
-                # Модель принтера
-                cell = ws.cell(row=row, column=3, value=printer_model)
-                cell.border = border
+        # Совместимые модели (пусто для сводной строки)
+        cell = ws.cell(row=row, column=5, value='')
+        cell.border = border
 
-                # Модель картриджа
-                cell = ws.cell(row=row, column=4, value=cartridge_model)
-                cell.border = border
-                if cartridge_model:
+        # Количество по цветам для каждого типа компонента
+        colors = ['Черный', 'Синий', 'Желтый', 'Пурпурный', 'Универсальный']
+        total_count = 0
+
+        for col_idx, color in enumerate(colors, start=6):
+            count = 0
+            # Суммируем по всем типам компонентов
+            for component_type in components:
+                component_colors = components.get(component_type, {})
+                count += component_colors.get(color, 0)
+
+            cell = ws.cell(row=row, column=col_idx, value=count if count > 0 else '')
+            cell.border = border
+            if count > 0:
+                cell.fill = PatternFill(start_color='E8F5E8', end_color='E8F5E8', fill_type='solid')
+            total_count += count
+
+        # Всего компонентов для этой локации
+        cell = ws.cell(row=row, column=11, value=total_count)
+        cell.font = Font(bold=True)
+        cell.border = border
+        cell.fill = PatternFill(start_color='F0F8FF', end_color='F0F8FF', fill_type='solid')
+
+        row += 1
+
+        # Добавляем детализацию по каждому компоненту
+        for component_type, component_colors in components.items():
+            if component_type == 'Картриджи':
+                # Для картриджей показываем детализацию по принтерам
+                printers = location.get('printers', [])
+                for printer in printers:
+                    replacements = printer.get('replacements', [])
+                    for replacement in replacements:
+                        if replacement.get('component_type') == 'Картридж':
+                            # Локация (пусто, уже указана выше)
+                            cell = ws.cell(row=row, column=2, value='')
+                            cell.border = border
+
+                            # Модель принтера
+                            printer_model = printer.get('model', '')
+                            cell = ws.cell(row=row, column=3, value=printer_model)
+                            cell.border = border
+
+                            # Тип компонента
+                            cell = ws.cell(row=row, column=4, value=replacement.get('component_type', ''))
+                            cell.border = border
+                            cell.fill = PatternFill(start_color='FFF9CC', end_color='FFF9CC', fill_type='solid')
+
+                            # Совместимые модели
+                            compatible_models = replacement.get('compatible_models', [])
+                            if compatible_models and compatible_models != ['Не определено']:
+                                models_text = ', '.join(compatible_models[:2])  # Показываем до 2 моделей
+                                if len(compatible_models) > 2:
+                                    models_text += '...'
+                                cell = ws.cell(row=row, column=5, value=models_text)
+                            else:
+                                # Получаем модели из компонент-детектора
+                                try:
+                                    models = component_detector.get_compatible_models(printer_model, 'cartridge')
+                                    models_text = ', '.join(models[:2])
+                                    if len(models) > 2:
+                                        models_text += '...'
+                                    cell = ws.cell(row=row, column=5, value=models_text)
+                                except:
+                                    cell = ws.cell(row=row, column=5, value='Не определено')
+                            cell.border = border
+                            cell.fill = PatternFill(start_color='E6F3FF', end_color='E6F3FF', fill_type='solid')
+
+                            # Цвет
+                            color = replacement.get('component_color', '')
+                            col_idx = {'Черный': 6, 'Синий': 7, 'Желтый': 8, 'Пурпурный': 9, 'Универсальный': 10}.get(color, 6)
+                            cell = ws.cell(row=row, column=col_idx, value=replacement.get('count', 0))
+                            cell.border = border
+                            cell.fill = PatternFill(start_color='E8F5E8', end_color='E8F5E8', fill_type='solid')
+
+                            # Всего
+                            cell = ws.cell(row=row, column=11, value=replacement.get('count', 0))
+                            cell.font = Font(bold=True)
+                            cell.border = border
+
+                            row += 1
+            else:
+                # Для фьюзеров и фотобарабанов - общая строка
+                universal_count = component_colors.get('Универсальный', 0)
+                if universal_count > 0:
+                    # Локация (пусто)
+                    cell = ws.cell(row=row, column=2, value='')
+                    cell.border = border
+
+                    # Модель принтера (пусто)
+                    cell = ws.cell(row=row, column=3, value='')
+                    cell.border = border
+
+                    # Тип компонента
+                    cell = ws.cell(row=row, column=4, value=component_type)
+                    cell.border = border
                     cell.fill = PatternFill(start_color='FFF9CC', end_color='FFF9CC', fill_type='solid')
 
-                # Цвета картриджей
-                colors = ['Черный', 'Синий', 'Желтый', 'Пурпурный']
-                total_count = 0
-
-                for col_idx, color in enumerate(colors, start=5):
-                    count = cartridges.get(color, 0)
-                    cell = ws.cell(row=row, column=col_idx, value=count)
+                    # Совместимые модели
+                    component_type_eng = component_type.lower().replace('ы', '').replace('Фьюзер', 'fuser').replace('Фотобарабан', 'photoconductor').replace('Барабан', 'photoconductor')
+                    try:
+                        models = component_detector.get_compatible_models('', component_type_eng)
+                        models_text = ', '.join(models[:2])
+                        if len(models) > 2:
+                            models_text += '...'
+                        cell = ws.cell(row=row, column=5, value=models_text)
+                    except:
+                        cell = ws.cell(row=row, column=5, value='Не определено')
                     cell.border = border
-                    if count > 0:
-                        cell.fill = PatternFill(start_color='E8F5E8', end_color='E8F5E8', fill_type='solid')
-                    total_count += count
+                    cell.fill = PatternFill(start_color='E6F3FF', end_color='E6F3FF', fill_type='solid')
 
-                # Всего картриджей для этого принтера
-                cell = ws.cell(row=row, column=9, value=total_count)
-                cell.font = Font(bold=True)
-                cell.border = border
-                cell.fill = PatternFill(start_color='F0F8FF', end_color='F0F8FF', fill_type='solid')
+                    # Универсальный (в соответствующей колонке)
+                    cell = ws.cell(row=row, column=10, value=universal_count)
+                    cell.border = border
+                    cell.fill = PatternFill(start_color='E8F5E8', end_color='E8F5E8', fill_type='solid')
 
-                row += 1
-        else:
-            # Если нет принтеров, показываем общую статистику по локации
-            cartridges = location.get('cartridges', {})
+                    # Всего
+                    cell = ws.cell(row=row, column=11, value=universal_count)
+                    cell.font = Font(bold=True)
+                    cell.border = border
 
-            cell = ws.cell(row=row, column=2, value=location_name)
-            cell.border = border
+                    row += 1
 
-            cell = ws.cell(row=row, column=3, value='Нет данных по принтерам')
-            cell.border = border
-            cell.font = Font(italic=True)
-
-            cell = ws.cell(row=row, column=4, value='')
-            cell.border = border
-
-            colors = ['Черный', 'Синий', 'Желтый', 'Пурпурный']
-            total_count = 0
-
-            for col_idx, color in enumerate(colors, start=5):
-                count = cartridges.get(color, 0)
-                cell = ws.cell(row=row, column=col_idx, value=count)
-                cell.border = border
-                total_count += count
-
-            if total_count > 0:
-                cell = ws.cell(row=row, column=9, value=total_count)
-                cell.font = Font(bold=True)
-                cell.border = border
-
-            row += 1
-
+            
     # Автоширина колонок
     column_widths = {
         'B': 20,  # Локация
         'C': 30,  # Модель принтера
-        'D': 20,  # Картридж
-        'E': 10,  # Черный
-        'F': 10,  # Синий
-        'G': 10,  # Желтый
-        'H': 12,  # Пурпурный
-        'I': 8    # Всего
+        'D': 20,  # Компонент
+        'E': 30,  # Совместимые модели
+        'F': 10,  # Черный
+        'G': 10,  # Синий
+        'H': 10,  # Желтый
+        'I': 12,  # Пурпурный
+        'J': 12,  # Универсальный
+        'K': 8    # Всего
     }
 
     for col, width in column_widths.items():
@@ -1217,12 +1330,12 @@ def create_top_printers_sheet(wb: Workbook, top_printers: list):
     ws.column_dimensions['B'].width = 20
 
 
-def create_basic_cartridge_report(data: list, period: str) -> str:
+def create_basic_component_report(data: list, period: str) -> str:
     """
     Создает базовый отчет если LLM недоступен
 
     Параметры:
-        data: Данные о картриджах
+        data: Данные о компонентах
         period: Период
 
     Возвращает:
@@ -1268,7 +1381,7 @@ def create_basic_cartridge_report(data: list, period: str) -> str:
 
         # Создаем имя файла
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_file = f"exports/cartridge_replacements_{timestamp}.xlsx"
+        output_file = f"exports/component_replacements_{timestamp}.xlsx"
 
         # Создаем директорию если не существует
         Path("exports").mkdir(exist_ok=True)
@@ -1276,9 +1389,9 @@ def create_basic_cartridge_report(data: list, period: str) -> str:
         # Сохраняем в Excel
         df.to_excel(output_file, index=False, engine='openpyxl')
 
-        logger.info(f"Базовый экспорт замен картриджей завершен: {output_file}")
+        logger.info(f"Базовый экспорт замен комплектующих завершен: {output_file}")
         return output_file
 
     except Exception as e:
-        logger.error(f"Ошибка базового экспорта замен картриджей: {e}")
+        logger.error(f"Ошибка базового экспорта замен комплектующих: {e}")
         return None

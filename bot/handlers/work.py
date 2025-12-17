@@ -21,7 +21,7 @@ async def start_work(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     logger.info(f"[WORK] Начало процесса регистрации работы, user_id={update.effective_user.id}")
     
     keyboard = [
-        [InlineKeyboardButton("🖨️ Замена картриджа", callback_data="work:cartridge")],
+        [InlineKeyboardButton("🔧 Замена комплектующих МФУ", callback_data="work:cartridge")],
         [InlineKeyboardButton("📦 Установка нового оборудования", callback_data="work:installation")],
         [InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")]
     ]
@@ -92,7 +92,7 @@ async def handle_work_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if work_type == 'cartridge':
         context.user_data['work_type'] = 'cartridge'
         await query.edit_message_text(
-            "🖨️ <b>Замена картриджа</b>\n\n"
+            "🔧 <b>Замена комплектующих МФУ</b>\n\n"
             "📍 Введите местоположение (филиал):",
             parse_mode='HTML'
         )
@@ -169,7 +169,7 @@ async def work_location_input(update: Update, context: ContextTypes.DEFAULT_TYPE
     logger.info(f"[WORK] Сохранена локация: {location}")
 
     if work_type == 'cartridge':
-        logger.info(f"[WORK] Запрос модели принтера для замены картриджа")
+        logger.info(f"[WORK] Запрос модели принтера для замены комплектующих МФУ")
         await update.message.reply_text(
             "🖨️ Введите модель принтера:"
         )
@@ -188,10 +188,10 @@ async def work_printer_model_input(update: Update, context: ContextTypes.DEFAULT
     Обработчик ввода модели принтера с подсказками
     """
     from bot.handlers.suggestions_handler import show_model_suggestions
-    from bot.services.printer_color_detector import is_color_printer
-    
+    from bot.services.printer_component_detector import component_detector
+
     model = update.message.text.strip()
-    
+
     # Показываем подсказки если есть совпадения
     try:
         if await show_model_suggestions(
@@ -205,66 +205,183 @@ async def work_printer_model_input(update: Update, context: ContextTypes.DEFAULT
     except Exception as e:
         logger.error(f"Ошибка при показе подсказок моделей принтеров: {e}")
         # Продолжаем выполнение даже если подсказки не сработали
-    
+
     context.user_data['work_printer_model'] = model
-    
-    # Отправляем сообщение о проверке цветности
+
+    # Отправляем сообщение о проверке компонентов
     status_msg = await update.message.reply_text(
-        "🔍 Определяю тип принтера (цветной/ч-б)..."
+        "🔍 Анализирую модель принтера и доступные компоненты..."
     )
-    
-    # Определяем поддержку цветной печати через LLM
-    is_color = is_color_printer(model)
-    
-    # Удаляем сообщение о проверке
+
+    # Определяем доступные компоненты через LLM
     try:
-        await status_msg.delete()
-    except:
-        pass
-    
-    if is_color is None:
-        # Не удалось определить - предлагаем выбрать вручную
-        keyboard = [
-            [InlineKeyboardButton("🎨 Цветной принтер", callback_data="printer_type:color")],
-            [InlineKeyboardButton("⚫ Черно-белый принтер", callback_data="printer_type:bw")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
+        components_data = component_detector.detect_printer_components(model)
+
+        # Сохраняем результат определения
+        context.user_data['printer_components'] = components_data
+        context.user_data['printer_is_color'] = components_data['color']
+
+        # Удаляем сообщение о проверке
+        try:
+            await status_msg.delete()
+        except:
+            pass
+
+        # Показываем выбор компонентов
+        return await show_component_selection(update, context, components_data)
+
+    except Exception as e:
+        logger.error(f"Error detecting components for {model}: {e}")
+
+        # Удаляем сообщение о проверке
+        try:
+            await status_msg.delete()
+        except:
+            pass
+
+        # При ошибке используем базовые компоненты
+        components_data = {
+            "color": False,
+            "components": {
+                "cartridge": True,
+                "fuser": True,
+                "drum": True
+            },
+            "component_list": ["cartridge", "fuser", "drum"]
+        }
+
+        context.user_data['printer_components'] = components_data
+        context.user_data['printer_is_color'] = False
+
         await update.message.reply_text(
-            "⚠️ Не удалось автоматически определить тип принтера.\n"
-            "Пожалуйста, выберите тип принтера вручную:",
-            reply_markup=reply_markup
+            "⚠️ Не удалось получить полную информацию о компонентаах.\n"
+            "Доступны базовые компоненты: картридж, фьюзер, фотобарабан."
         )
-        return States.WORK_CARTRIDGE_COLOR_SELECTION
-    
-    # Сохраняем результат определения
-    context.user_data['printer_is_color'] = is_color
-    
-    if is_color:
-        # Цветной принтер - 4 цвета
-        keyboard = [
-            [InlineKeyboardButton("⚫ Черный", callback_data="cartridge_color:black")],
-            [InlineKeyboardButton("🔵 Синий (Cyan)", callback_data="cartridge_color:cyan")],
-            [InlineKeyboardButton("🟡 Желтый (Yellow)", callback_data="cartridge_color:yellow")],
-            [InlineKeyboardButton("🔴 Пурпурный (Magenta)", callback_data="cartridge_color:magenta")]
-        ]
-        printer_type_text = "🎨 Цветной принтер"
+
+        return await show_component_selection(update, context, components_data)
+
+
+@handle_errors
+async def show_component_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, components_data: dict) -> int:
+    """
+    Показывает меню выбора компонентов на основе детекции
+    """
+    from bot.services.printer_component_detector import component_detector
+
+    model = context.user_data.get('work_printer_model', 'неизвестная модель')
+    is_color = components_data.get('color', False)
+    available_components = components_data.get('component_list', [])
+
+    # Формируем сообщение с информацией о принтере
+    printer_type_text = "🎨 Цветной принтер" if is_color else "⚫ Черно-белый принтер"
+
+    # Определяем источник информации
+    if components_data.get('from_cache'):
+        source_info = " (из кэша)"
+    elif components_data.get('error'):
+        source_info = " (базовый анализ)"
     else:
-        # Черно-белый принтер
-        keyboard = [
-            [InlineKeyboardButton("⚫ Черный", callback_data="cartridge_color:black")]
-        ]
-        printer_type_text = "⚫ Черно-белый принтер"
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        f"✅ Определен тип: {printer_type_text}\n\n"
-        f"🎨 Выберите цвет установленного картриджа:",
-        reply_markup=reply_markup
+        source_info = " (AI-анализ)"
+
+    message_text = (
+        f"🖨️ Модель принтера: {model}\n"
+        f"📊 Тип: {printer_type_text}{source_info}\n\n"
+        f"🔧 Выберите компонент для замены:"
     )
-    
-    return States.WORK_CARTRIDGE_COLOR_SELECTION
+
+    # Создаем клавиатуру с доступными компонентами
+    keyboard = []
+
+    # Проверяем какие компоненты доступны
+    if 'cartridge' in available_components:
+        keyboard.append([
+            InlineKeyboardButton(
+                component_detector.get_component_display_name('cartridge'),
+                callback_data="component:cartridge"
+            )
+        ])
+
+    if 'fuser' in available_components:
+        keyboard.append([
+            InlineKeyboardButton(
+                component_detector.get_component_display_name('fuser'),
+                callback_data="component:fuser"
+            )
+        ])
+
+    if 'photoconductor' in available_components:
+        keyboard.append([
+            InlineKeyboardButton(
+                component_detector.get_component_display_name('photoconductor'),
+                callback_data="component:photoconductor"
+            )
+        ])
+
+    # Дополнительные компоненты
+    additional_components = ['waste_toner', 'transfer_belt']
+    for comp in additional_components:
+        if comp in available_components:
+            keyboard.append([
+                InlineKeyboardButton(
+                    component_detector.get_component_display_name(comp),
+                    callback_data=f"component:{comp}"
+                )
+            ])
+
+    # Кнопка отмены
+    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="component:cancel")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Определяем как отправить сообщение - через callback или обычное сообщение
+    if update.callback_query:
+        await update.callback_query.message.reply_text(message_text, reply_markup=reply_markup)
+    else:
+        await update.message.reply_text(message_text, reply_markup=reply_markup)
+
+    return States.WORK_COMPONENT_SELECTION
+
+
+@handle_errors
+async def work_component_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обработчик ввода компонента (если пользователь решит ввести текстом)
+    """
+    component_input = update.message.text.strip().lower()
+
+    # Маппинг текстовых вариантов к типам компонентов
+    component_mapping = {
+        'картридж': 'cartridge',
+        'картриджи': 'cartridge',
+        'чернила': 'cartridge',
+        'тонер': 'cartridge',
+        'фьюзер': 'fuser',
+        'печка': 'fuser',
+        'нагревательный элемент': 'fuser',
+        'барабан': 'photoconductor',  # Обратная совместимость
+        'фотооптический барабан': 'photoconductor',
+        'фотобарабан': 'photoconductor',
+        'опк': 'photoconductor',
+        'opc': 'photoconductor',
+        'контейнер': 'waste_toner',
+        'отработанный тонер': 'waste_toner',
+        'трансферный ремень': 'transfer_belt',
+        'ремень переноса': 'transfer_belt'
+    }
+
+    component_type = component_mapping.get(component_input)
+
+    if not component_type:
+        await update.message.reply_text(
+            "❌ Неизвестный компонент. Пожалуйста, используйте кнопки для выбора."
+        )
+        return States.WORK_COMPONENT_SELECTION
+
+    # Сохраняем выбранный компонент
+    context.user_data['work_component_type'] = component_type
+
+    # Обрабатываем выбор компонента
+    return await handle_component_selection_logic(update, context, component_type)
 
 
 @handle_errors
@@ -382,6 +499,98 @@ async def handle_printer_type_selection(update: Update, context: ContextTypes.DE
 
 
 @handle_errors
+async def handle_component_selection_logic(update: Update, context: ContextTypes.DEFAULT_TYPE, component_type: str) -> int:
+    """
+    Обрабатывает логику после выбора компонента
+    """
+    from bot.services.printer_component_detector import component_detector
+
+    model = context.user_data.get('work_printer_model', 'неизвестная модель')
+    is_color = context.user_data.get('printer_is_color', False)
+
+    # Получаем отображаемое имя компонента
+    component_name = component_detector.get_component_display_name(component_type)
+
+    if component_type == 'cartridge':
+        # Для картриджа нужно выбрать цвет
+        if is_color:
+            # Цветной принтер - 4 цвета
+            keyboard = [
+                [InlineKeyboardButton("⚫ Черный", callback_data="cartridge_color:black")],
+                [InlineKeyboardButton("🔵 Синий (Cyan)", callback_data="cartridge_color:cyan")],
+                [InlineKeyboardButton("🟡 Желтый (Yellow)", callback_data="cartridge_color:yellow")],
+                [InlineKeyboardButton("🔴 Пурпурный (Magenta)", callback_data="cartridge_color:magenta")]
+            ]
+        else:
+            # Черно-белый принтер
+            keyboard = [
+                [InlineKeyboardButton("⚫ Черный", callback_data="cartridge_color:black")]
+            ]
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        message_text = (
+            f"✅ Выбран компонент: {component_name}\n\n"
+            f"🎨 Выберите цвет установленного картриджа:"
+        )
+
+        # Отправляем сообщение
+        if update.callback_query:
+            await update.callback_query.message.reply_text(message_text, reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(message_text, reply_markup=reply_markup)
+
+        return States.WORK_CARTRIDGE_COLOR_SELECTION
+    else:
+        # Для фьюзера, фотобарабана и других компонентов цвет не важен
+        context.user_data['work_component_color'] = 'Универсальный'
+
+        message_text = (
+            f"✅ Выбран компонент: {component_name}\n\n"
+            f"⚙️ Для этого компонента цвет не важен (универсальный)."
+        )
+
+        # Отправляем сообщение и показываем подтверждение
+        if update.callback_query:
+            await update.callback_query.message.reply_text(message_text)
+        else:
+            await update.message.reply_text(message_text)
+
+        # Показываем подтверждение
+        return await show_work_confirmation(update, context, component_type, 'Универсальный')
+
+
+@handle_errors
+async def handle_component_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обработчик выбора компонента из callback
+    """
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+    if not data.startswith('component:'):
+        return States.WORK_COMPONENT_SELECTION
+
+    component_type = data.split(':')[1]
+
+    if component_type == 'cancel':
+        # Отмена операции
+        await query.edit_message_text("❌ Операция отменена")
+        return ConversationHandler.END
+
+    # Обратная совместимость: конвертируем drum в photoconductor
+    if component_type == 'drum':
+        component_type = 'photoconductor'
+
+    # Сохраняем выбранный компонент
+    context.user_data['work_component_type'] = component_type
+
+    # Обрабатываем выбор компонента
+    return await handle_component_selection_logic(update, context, component_type)
+
+
+@handle_errors
 async def handle_cartridge_color(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     Обработчик выбора цвета картриджа
@@ -403,8 +612,74 @@ async def handle_cartridge_color(update: Update, context: ContextTypes.DEFAULT_T
     await query.edit_message_text(f"✅ Выбран цвет: {color_names.get(color, color)}")
     
     # Показываем подтверждение
-    await show_cartridge_confirmation(update, context)
-    
+    if context.user_data.get('work_component_type') == 'cartridge':
+        await show_cartridge_confirmation(update, context)
+    else:
+        component_type = context.user_data.get('work_component_type', '')
+        component_color = context.user_data.get('work_component_color', '')
+        await show_work_confirmation(update, context, component_type, component_color)
+
+    return States.WORK_CONFIRMATION
+
+
+async def show_work_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, component_type: str = None, component_color: str = None):
+    """
+    Показывает подтверждение для замены компонента
+    """
+    from bot.services.printer_component_detector import component_detector
+
+    branch = context.user_data.get('work_branch', '')
+    location = context.user_data.get('work_location', '')
+    printer_model = context.user_data.get('work_printer_model', '')
+
+    # Если компонент и цвет не переданы, берем из user_data
+    if component_type is None:
+        component_type = context.user_data.get('work_component_type', 'cartridge')
+    if component_color is None:
+        component_color = context.user_data.get('work_cartridge_color', context.user_data.get('work_component_color', ''))
+
+    # Получаем отображаемое имя компонента
+    component_name = component_detector.get_component_display_name(component_type)
+
+    # Определяем заголовок и текст в зависимости от типа компонента
+    if component_type == 'cartridge':
+        title = "замены картриджа"
+        color_field = f"🎨 <b>Цвет картриджа:</b> {component_color}"
+    else:
+        title = f"замены {component_name.lower()}"
+        color_field = f"⚙️ <b>Тип компонента:</b> {component_name}"
+
+    confirmation_text = (
+        f"📋 <b>Подтверждение {title}</b>\n\n"
+        f"📍 <b>Филиал:</b> {branch}\n"
+        f"📍 <b>Локация:</b> {location}\n"
+        f"🖨️ <b>Модель принтера:</b> {printer_model}\n"
+        f"{color_field}\n\n"
+        "❓ Сохранить эти данные?"
+    )
+
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Сохранить", callback_data="confirm_work"),
+            InlineKeyboardButton("❌ Отменить", callback_data="cancel_work")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if update.callback_query:
+        await update.callback_query.message.reply_text(
+            confirmation_text,
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+    else:
+        await update.message.reply_text(
+            confirmation_text,
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+
+    # Важно: функция должна возвращать состояние WORK_CONFIRMATION
     return States.WORK_CONFIRMATION
 
 
@@ -418,7 +693,7 @@ async def show_cartridge_confirmation(update: Update, context: ContextTypes.DEFA
     cartridge_color = context.user_data.get('work_cartridge_color', '')
     
     confirmation_text = (
-        "📋 <b>Подтверждение замены картриджа</b>\n\n"
+        "📋 <b>Подтверждение замены комплектующих</b>\n\n"
         f"📍 <b>Филиал:</b> {branch}\n"
         f"📍 <b>Локация:</b> {location}\n"
         f"🖨️ <b>Модель принтера:</b> {printer_model}\n"
@@ -446,6 +721,9 @@ async def show_cartridge_confirmation(update: Update, context: ContextTypes.DEFA
             parse_mode='HTML',
             reply_markup=reply_markup
         )
+
+    # Важно: функция должна возвращать состояние WORK_CONFIRMATION
+    return States.WORK_CONFIRMATION
 
 
 async def show_installation_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -508,7 +786,7 @@ async def handle_work_confirmation(update: Update, context: ContextTypes.DEFAULT
         work_type = context.user_data.get('work_type')
         
         if work_type == 'cartridge':
-            success = await save_cartridge_replacement(context)
+            success = await save_component_replacement(context)  # Используем новую универсальную функцию
         else:  # installation
             success = await save_equipment_installation(context)
         
@@ -539,50 +817,79 @@ async def handle_work_confirmation(update: Update, context: ContextTypes.DEFAULT
     return States.WORK_CONFIRMATION
 
 
-async def save_cartridge_replacement(context: ContextTypes.DEFAULT_TYPE) -> bool:
+async def save_component_replacement(context: ContextTypes.DEFAULT_TYPE) -> bool:
     """
-    Сохраняет данные о замене картриджа в JSON
+    Сохраняет данные о замене компонента в JSON
     """
     import json
     from pathlib import Path
     from database_manager import database_manager
-    
+
     try:
-        file_path = Path("data/cartridge_replacements.json")
-        
+        file_path = Path("data/cartridge_replacements.json")  # Оставляем старое имя файла для обратной совместимости
+
         # Загружаем существующие данные
         if file_path.exists():
             with open(file_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
         else:
             data = []
-        
+
         # Получаем текущую БД пользователя
         user_id = context._user_id if hasattr(context, '_user_id') else None
         db_name = database_manager.get_user_database(user_id) if user_id else 'ITINVENT'
-        
-        # Создаем новую запись
+
+        # Определяем тип компонента и цвет
+        component_type = context.user_data.get('work_component_type', 'cartridge')
+
+        if component_type == 'cartridge':
+            component_color = context.user_data.get('work_cartridge_color', '')
+        else:
+            component_color = context.user_data.get('work_component_color', 'Универсальный')
+
+        # Создаем новую запись с новой структурой
         record = {
             'branch': context.user_data.get('work_branch', ''),
             'location': context.user_data.get('work_location', ''),
             'printer_model': context.user_data.get('work_printer_model', ''),
-            'cartridge_color': context.user_data.get('work_cartridge_color', ''),
+            'component_type': component_type,  # NEW
+            'component_color': component_color,  # Переименовано с cartridge_color
+            # Для обратной совместимости оставляем старое поле
+            'cartridge_color': component_color if component_type == 'cartridge' else '',
             'db_name': db_name,
             'timestamp': datetime.now().isoformat()
         }
-        
+
         data.append(record)
-        
+
         # Сохраняем
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        
-        logger.info(f"Сохранена замена картриджа: {record}")
+
+        # Логируем с информацией о типе компонента
+        component_name = {
+            'cartridge': 'картриджа',
+            'fuser': 'фьюзера (печки)',
+            'drum': 'фотобарабана',  # Обратная совместимость
+            'photoconductor': 'фотобарабана',
+            'waste_toner': 'контейнера отработанного тонера',
+            'transfer_belt': 'трансферного ремня'
+        }.get(component_type, 'компонента')
+
+        logger.info(f"Сохранена замена {component_name}: {record}")
         return True
-        
+
     except Exception as e:
-        logger.error(f"Ошибка сохранения замены картриджа: {e}")
+        logger.error(f"Ошибка сохранения замены компонента: {e}")
         return False
+
+
+# Для обратной совместимости оставляем старую функцию
+async def save_cartridge_replacement(context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """
+    Сохраняет данные о замене картриджа в JSON (обратная совместимость)
+    """
+    return await save_component_replacement(context)
 
 
 async def save_equipment_installation(context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -735,7 +1042,7 @@ async def handle_work_model_suggestion(update: Update, context: ContextTypes.DEF
     """
     Обработчик выбора модели из подсказок (для принтера или оборудования)
     """
-    from bot.services.printer_color_detector import is_color_printer
+    # Старый импорт больше не нужен - используем component_detector
     
     query = update.callback_query
     await query.answer()
@@ -748,58 +1055,61 @@ async def handle_work_model_suggestion(update: Update, context: ContextTypes.DEF
             pending = context.user_data.get('pending_work_printer_model', '').strip()
             context.user_data['work_printer_model'] = pending
             await query.edit_message_text(f"✅ Принято: {pending}")
-            
-            # Отправляем сообщение о проверке цветности
+
+            # Используем новую компонентную детекцию
+            from bot.services.printer_component_detector import component_detector
+
+            # Отправляем сообщение о проверке компонентов
             status_msg = await query.message.reply_text(
-                "🔍 Определяю тип принтера (цветной/ч-б)..."
+                "🔍 Анализирую модель принтера и доступные компоненты..."
             )
-            
-            # Определяем поддержку цветной печати через LLM
-            is_color = is_color_printer(pending)
-            
-            # Удаляем сообщение о проверке
+
+            # Определяем доступные компоненты через LLM
             try:
-                await status_msg.delete()
-            except:
-                pass
-            
-            if is_color is None:
-                # Не удалось определить - предлагаем выбрать вручную
-                keyboard = [
-                    [InlineKeyboardButton("🎨 Цветной принтер", callback_data="printer_type:color")],
-                    [InlineKeyboardButton("⚫ Черно-белый принтер", callback_data="printer_type:bw")]
-                ]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                
+                components_data = component_detector.detect_printer_components(pending)
+
+                # Сохраняем результат определения
+                context.user_data['printer_components'] = components_data
+                context.user_data['printer_is_color'] = components_data['color']
+
+                # Удаляем сообщение о проверке
+                try:
+                    await status_msg.delete()
+                except:
+                    pass
+
+                # Показываем выбор компонентов
+                return await show_component_selection(update, context, components_data)
+
+            except Exception as e:
+                logger.error(f"Error detecting components for {pending}: {e}")
+
+                # Удаляем сообщение о проверке
+                try:
+                    await status_msg.delete()
+                except:
+                    pass
+
+                # При ошибке используем базовые компоненты
+                components_data = {
+                    "color": False,
+                    "components": {
+                        "cartridge": True,
+                        "fuser": True,
+                        "drum": True
+                    },
+                    "component_list": ["cartridge", "fuser", "drum"]
+                }
+
+                context.user_data['printer_components'] = components_data
+                context.user_data['printer_is_color'] = False
+
                 await query.message.reply_text(
-                    "⚠️ Не удалось автоматически определить тип принтера.\n"
-                    "Пожалуйста, выберите тип принтера вручную:",
-                    reply_markup=reply_markup
+                    "⚠️ Не удалось получить полную информацию о компонентах.\n"
+                    "Доступны базовые компоненты: картридж, фьюзер, фотобарабан."
                 )
-                return States.WORK_CARTRIDGE_COLOR_SELECTION
-            
-            # Сохраняем результат определения
-            context.user_data['printer_is_color'] = is_color
-            
-            if is_color:
-                keyboard = [
-                    [InlineKeyboardButton("⚫ Черный", callback_data="cartridge_color:black")],
-                    [InlineKeyboardButton("🔵 Синий (Cyan)", callback_data="cartridge_color:cyan")],
-                    [InlineKeyboardButton("🟡 Желтый (Yellow)", callback_data="cartridge_color:yellow")],
-                    [InlineKeyboardButton("🔴 Пурпурный (Magenta)", callback_data="cartridge_color:magenta")]
-                ]
-                printer_type_text = "🎨 Цветной принтер"
-            else:
-                keyboard = [[InlineKeyboardButton("⚫ Черный", callback_data="cartridge_color:black")]]
-                printer_type_text = "⚫ Черно-белый принтер"
-            
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.message.reply_text(
-                f"✅ Определен тип: {printer_type_text}\n\n"
-                f"🎨 Выберите цвет картриджа:",
-                reply_markup=reply_markup
-            )
-            return States.WORK_CARTRIDGE_COLOR_SELECTION
+
+                return await show_component_selection(update, context, components_data)
         else:
             pending = context.user_data.get('pending_work_equipment_model', '').strip()
             context.user_data['work_equipment_model'] = pending
@@ -861,58 +1171,61 @@ async def handle_work_model_suggestion(update: Update, context: ContextTypes.DEF
                     selected_model = suggestions[idx]
                     context.user_data['work_printer_model'] = selected_model
                     await query.edit_message_text(f"✅ Выбрана модель: {selected_model}")
-                    
-                    # Отправляем сообщение о проверке цветности
+
+                    # Используем новую компонентную детекцию
+                    from bot.services.printer_component_detector import component_detector
+
+                    # Отправляем сообщение о проверке компонентов
                     status_msg = await query.message.reply_text(
-                        "🔍 Определяю тип принтера (цветной/ч-б)..."
+                        "🔍 Анализирую модель принтера и доступные компоненты..."
                     )
-                    
-                    # Определяем поддержку цветной печати через LLM
-                    is_color = is_color_printer(selected_model)
-                    
-                    # Удаляем сообщение о проверке
+
+                    # Определяем доступные компоненты через LLM
                     try:
-                        await status_msg.delete()
-                    except:
-                        pass
-                    
-                    if is_color is None:
-                        # Не удалось определить - предлагаем выбрать вручную
-                        keyboard = [
-                            [InlineKeyboardButton("🎨 Цветной принтер", callback_data="printer_type:color")],
-                            [InlineKeyboardButton("⚫ Черно-белый принтер", callback_data="printer_type:bw")]
-                        ]
-                        reply_markup = InlineKeyboardMarkup(keyboard)
-                        
+                        components_data = component_detector.detect_printer_components(selected_model)
+
+                        # Сохраняем результат определения
+                        context.user_data['printer_components'] = components_data
+                        context.user_data['printer_is_color'] = components_data['color']
+
+                        # Удаляем сообщение о проверке
+                        try:
+                            await status_msg.delete()
+                        except:
+                            pass
+
+                        # Показываем выбор компонентов
+                        return await show_component_selection(update, context, components_data)
+
+                    except Exception as e:
+                        logger.error(f"Error detecting components for {selected_model}: {e}")
+
+                        # Удаляем сообщение о проверке
+                        try:
+                            await status_msg.delete()
+                        except:
+                            pass
+
+                        # При ошибке используем базовые компоненты
+                        components_data = {
+                            "color": False,
+                            "components": {
+                                "cartridge": True,
+                                "fuser": True,
+                                "drum": True
+                            },
+                            "component_list": ["cartridge", "fuser", "drum"]
+                        }
+
+                        context.user_data['printer_components'] = components_data
+                        context.user_data['printer_is_color'] = False
+
                         await query.message.reply_text(
-                            "⚠️ Не удалось автоматически определить тип принтера.\n"
-                            "Пожалуйста, выберите тип принтера вручную:",
-                            reply_markup=reply_markup
+                            "⚠️ Не удалось получить полную информацию о компонентах.\n"
+                            "Доступны базовые компоненты: картридж, фьюзер, фотобарабан."
                         )
-                        return States.WORK_CARTRIDGE_COLOR_SELECTION
-                    
-                    # Сохраняем результат определения
-                    context.user_data['printer_is_color'] = is_color
-                    
-                    if is_color:
-                        keyboard = [
-                            [InlineKeyboardButton("⚫ Черный", callback_data="cartridge_color:black")],
-                            [InlineKeyboardButton("🔵 Синий (Cyan)", callback_data="cartridge_color:cyan")],
-                            [InlineKeyboardButton("🟡 Желтый (Yellow)", callback_data="cartridge_color:yellow")],
-                            [InlineKeyboardButton("🔴 Пурпурный (Magenta)", callback_data="cartridge_color:magenta")]
-                        ]
-                        printer_type_text = "🎨 Цветной принтер"
-                    else:
-                        keyboard = [[InlineKeyboardButton("⚫ Черный", callback_data="cartridge_color:black")]]
-                        printer_type_text = "⚫ Черно-белый принтер"
-                    
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-                    await query.message.reply_text(
-                        f"✅ Определен тип: {printer_type_text}\n\n"
-                        f"🎨 Выберите цвет картриджа:",
-                        reply_markup=reply_markup
-                    )
-                    return States.WORK_CARTRIDGE_COLOR_SELECTION
+
+                        return await show_component_selection(update, context, components_data)
             else:
                 suggestions = context.user_data.get('work_equipment_model_suggestions', [])
                 if 0 <= idx < len(suggestions):
