@@ -1757,44 +1757,44 @@
     "components": ["cartridge", "fuser"]
   },
 
-  "hp color laserjet cp4525": {
-    "oem_cartridge": "HP 640A",
+"hp color laserjet cp4525": {
+    "oem_cartridge": "HP 649A",
     "is_color": true,
     "compatible_models": [
       {
-        "model": "HP 640A",
+        "model": "HP 649A",
         "description": "Стандартный картридж",
         "color": "Черный",
         "page_yield": 8500,
-        "oem_part": "CE270A",
+        "oem_part": "CE260A",
         "is_oem": true
       },
       {
-        "model": "HP 640A",
+        "model": "HP 648A",
         "description": "Стандартный картридж",
         "color": "Синий",
         "page_yield": 11000,
-        "oem_part": "CE271A",
+        "oem_part": "CE261A",
         "is_oem": false
       },
       {
-        "model": "HP 640A",
+        "model": "HP 648A",
         "description": "Стандартный картридж",
         "color": "Желтый",
         "page_yield": 11000,
-        "oem_part": "CE272A",
+        "oem_part": "CE262A",
         "is_oem": false
       },
       {
-        "model": "HP 640A",
+        "model": "HP 648A",
         "description": "Стандартный картридж",
         "color": "Пурпурный",
         "page_yield": 11000,
-        "oem_part": "CE273A",
+        "oem_part": "CE263A",
         "is_oem": false
       }
     ],
-    "fuser_models": ["RM1-6426"],
+    "fuser_models": ["RM1-5606"],
     "photoconductor_models": ["CE257A"],
     "waste_toner_models": ["CE258A"],
     "transfer_belt_models": ["CE259A"],
@@ -1881,45 +1881,45 @@
         "is_oem": false
       }
     ],
-    "fuser_models": ["RM1-6425"],
+    "fuser_models": ["RM1-7397"],
     "photoconductor_models": ["Встроен в картридж"],
     "components": ["cartridge", "fuser"]
   },
 
   "hp designjet t790ps 24in": {
-    "oem_cartridge": "HP 711",
+    "oem_cartridge": "HP 72",
     "is_color": true,
     "compatible_models": [
       {
-        "model": "HP 711",
+        "model": "HP 72",
         "description": "Черные чернила",
         "color": "Черный",
         "page_yield": 1300,
-        "oem_part": "CZ130A",
+        "oem_part": "C9370A",
         "is_oem": true
       },
       {
-        "model": "HP 711",
+        "model": "HP 72",
         "description": "Синие чернила",
         "color": "Синий",
         "page_yield": 700,
-        "oem_part": "CZ127A",
+        "oem_part": "C9371A",
         "is_oem": false
       },
       {
-        "model": "HP 711",
+        "model": "HP 72",
         "description": "Пурпурные чернила",
         "color": "Пурпурный",
         "page_yield": 700,
-        "oem_part": "CZ129A",
+        "oem_part": "C9372A",
         "is_oem": false
       },
       {
-        "model": "HP 711",
+        "model": "HP 72",
         "description": "Желтые чернила",
         "color": "Желтый",
         "page_yield": 700,
-        "oem_part": "CZ128A",
+        "oem_part": "C9373A",
         "is_oem": false
       }
     ],
@@ -1953,15 +1953,15 @@
   },
 
   "hp laserjet pro mfp m132a": {
-    "oem_cartridge": "HP 17A",
+    "oem_cartridge": "HP 18A",
     "is_color": false,
     "compatible_models": [
       {
-        "model": "HP 17A",
+        "model": "HP 18A",
         "description": "Стандартный картридж",
         "color": "Черный",
         "page_yield": 1000,
-        "oem_part": "CF217A",
+        "oem_part": "CF2178",
         "is_oem": true
       },
       {
@@ -1969,60 +1969,44 @@
         "description": "Увеличенной емкости",
         "color": "Черный",
         "page_yield": 2500,
-        "oem_part": "CF217X",
+        "oem_part": "CF218X",
         "is_oem": false
       }
     ],
-    "fuser_models": ["RM1-8372"],
+    "fuser_models": ["RM1-1652"],
     "photoconductor_models": ["Встроен в картридж"],
     "components": ["cartridge", "fuser"]
   },
 
   "xerox docucentre sc2020": {
-    "oem_cartridge": "Xerox 106R02201",
+    "oem_cartridge": "Xerox 006R01693",
     "is_color": false,
     "compatible_models": [
       {
-        "model": "Xerox 106R02201",
+        "model": "Xerox 006R01693",
         "description": "Стандартный картридж",
         "color": "Черный",
         "page_yield": 5500,
-        "oem_part": "106R02201",
+        "oem_part": "006R01693",
         "is_oem": true
-      },
-      {
-        "model": "Xerox 106R02202",
-        "description": "Увеличенной емкости",
-        "color": "Черный",
-        "page_yield": 11000,
-        "oem_part": "106R02202",
-        "is_oem": false
       }
     ],
-    "fuser_models": ["126N00244"],
-    "photoconductor_models": ["126N00245"],
+    "fuser_models": ["126K34679"],
+    "photoconductor_models": ["013R00677"],
     "components": ["cartridge", "fuser", "photoconductor"]
   },
 
   "xerox workcentre 3345": {
-    "oem_cartridge": "Xerox 106R02773",
+    "oem_cartridge": "Xerox 106R03621",
     "is_color": false,
     "compatible_models": [
       {
-        "model": "Xerox 106R02773",
+        "model": "Xerox 106R03621",
         "description": "Стандартный картридж",
         "color": "Черный",
         "page_yield": 3000,
-        "oem_part": "106R02773",
+        "oem_part": "106R03621",
         "is_oem": true
-      },
-      {
-        "model": "Xerox 106R02773 Pack",
-        "description": "Двойная упаковка",
-        "color": "Черный",
-        "page_yield": 6000,
-        "oem_part": "106R02773",
-        "is_oem": false
       }
     ],
     "fuser_models": ["126N00410"],
@@ -2031,41 +2015,33 @@
   },
 
   "xerox workcentre 7345": {
-    "oem_cartridge": "Xerox 006R01314",
+    "oem_cartridge": "Xerox 006R01175",
     "is_color": false,
     "compatible_models": [
       {
-        "model": "Xerox 006R01314",
+        "model": "Xerox 006R01175",
         "description": "Стандартный картридж",
         "color": "Черный",
         "page_yield": 20000,
-        "oem_part": "006R01314",
+        "oem_part": "006R01175",
         "is_oem": true
-      },
-      {
-        "model": "Xerox 006R01315",
-        "description": "Увеличенной емкости",
-        "color": "Черный",
-        "page_yield": 30000,
-        "oem_part": "006R01315",
-        "is_oem": false
       }
     ],
-    "fuser_models": ["115R00200"],
-    "photoconductor_models": ["113R00633"],
+    "fuser_models": ["008R13028"],
+    "photoconductor_models": ["013R00624"],
     "components": ["cartridge", "fuser", "photoconductor"]
   },
 
   "canon i-sensys x 1238i": {
-    "oem_cartridge": "Canon C-EXV 42",
+    "oem_cartridge": "EasyPrint LC-T08",
     "is_color": false,
     "compatible_models": [
       {
-        "model": "Canon C-EXV 42",
+        "model": "CEasyPrint LC-T08",
         "description": "Тонер-туба черная",
         "color": "Черный",
         "page_yield": 10200,
-        "oem_part": "6908B002",
+        "oem_part": "T08",
         "is_oem": true
       }
     ],
@@ -2075,11 +2051,11 @@
   },
 
   "xerox versalink c7125": {
-    "oem_cartridge": "Xerox 006R01824",
+    "oem_cartridge": "Xerox 006R01828",
     "is_color": true,
     "compatible_models": [
       {
-        "model": "Xerox 006R01824",
+        "model": "Xerox 006R01828",
         "description": "Повышенной емкости",
         "color": "Черный",
         "page_yield": 31300,
@@ -2087,15 +2063,15 @@
         "is_oem": true
       },
       {
-        "model": "Xerox 006R01825",
+        "model": "Xerox 006R01829",
         "description": "Повышенной емкости",
         "color": "Синий",
         "page_yield": 9500,
-        "oem_part": "006R01825",
+        "oem_part": "006R01829",
         "is_oem": false
       },
       {
-        "model": "Xerox 006R01826",
+        "model": "Xerox 006R01831",
         "description": "Повышенной емкости",
         "color": "Желтый",
         "page_yield": 9500,
@@ -2103,7 +2079,7 @@
         "is_oem": false
       },
       {
-        "model": "Xerox 006R01827",
+        "model": "Xerox 006R01830",
         "description": "Повышенной емкости",
         "color": "Пурпурный",
         "page_yield": 9500,
@@ -2111,9 +2087,9 @@
         "is_oem": false
       }
     ],
-    "fuser_models": ["115R00334"],
-    "photoconductor_models": ["115R00335"],
-    "waste_toner_models": ["115R00336"],
+    "fuser_models": ["008R13088"],
+    "photoconductor_models": ["13R00688"],
+    "waste_toner_models": ["115R00128"],
     "components": ["cartridge", "fuser", "photoconductor", "waste_toner"]
   }
 }
