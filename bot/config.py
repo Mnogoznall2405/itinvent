@@ -163,7 +163,7 @@ def load_config() -> AppConfig:
     api_config = APIConfig(
         openrouter_api_key=openrouter_key,
         ocr_model=os.getenv("OCR_MODEL", "qwen/qwen3-vl-8b-instruct"),
-        cartridge_analysis_model=os.getenv("CARTRIDGE_ANALYSIS_MODEL", "google/gemini-2.5-flash")
+        cartridge_analysis_model=os.getenv("CARTRIDGE_ANALYSIS_MODEL", "google/gemini-3-flash-preview")
     )
     
     # Database конфигурация

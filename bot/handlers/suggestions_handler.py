@@ -191,7 +191,7 @@ async def show_model_suggestions(
     equipment_type: str = "printers_mfu"
 ) -> bool:
     """
-    Показывает подсказки для модели оборудования с улучшенным поиском по частям слов
+    Показывает подсказки для модели оборудования с интеграцией базы данных картриджей
 
     Параметры:
         update: Объект обновления от Telegram API
@@ -206,6 +206,7 @@ async def show_model_suggestions(
         bool: True если подсказки показаны
     """
     from bot.services.suggestions import get_model_suggestions
+    from bot.services.cartridge_database import cartridge_database
     from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 
     context.user_data[pending_key] = model_name
@@ -213,30 +214,81 @@ async def show_model_suggestions(
     if len(model_name.strip()) >= 2:
         try:
             user_id = update.effective_user.id
-            suggestions = get_model_suggestions(model_name, user_id, equipment_type=equipment_type)
+
+            # Сначала проверяем в базе данных картриджей для принтеров/МФУ
+            cartridge_suggestions = []
+            if equipment_type in ['printers', 'printers_mfu', 'all']:
+                try:
+                    # Поиск принтеров в базе данных картриджей
+                    cartridge_db = cartridge_database._load_database()
+                    for printer_name in cartridge_db.keys():
+                        if model_name.lower() in printer_name.lower():
+                            cartridge_suggestions.append(printer_name)
+
+                    # Добавляем информацию о совместимости
+                    if cartridge_suggestions:
+                        cartridge_suggestions = sorted(list(set(cartridge_suggestions)))[:5]  # Уникальные и до 5 штук
+                        logger.info(f"Found {len(cartridge_suggestions)} printers in cartridge database for '{model_name}'")
+                except Exception as e:
+                    logger.error(f"Error searching cartridge database: {e}")
+
+            # Затем получаем обычные подсказки из базы данных инвентаризации
+            regular_suggestions = get_model_suggestions(model_name, user_id, equipment_type=equipment_type)
+
+            # Объединяем и удаляем дубликаты
+            all_suggestions = cartridge_suggestions + regular_suggestions
+            unique_suggestions = []
+            seen = set()
+            for suggestion in all_suggestions:
+                if suggestion not in seen:
+                    unique_suggestions.append(suggestion)
+                    seen.add(suggestion)
+
+            suggestions = unique_suggestions
 
             if suggestions:
                 context.user_data[suggestions_key] = suggestions
 
-                # Улучшенное форматирование клавиатуры
+                # Улучшенное форматирование клавиатуры с интеграцией базы данных картриджей
                 keyboard = []
                 for idx, model in enumerate(suggestions):
                     # Обрезаем слишком длинные названия для кнопок
                     display_model = model[:40] + "..." if len(model) > 40 else model
 
-                    # Определяем иконку в зависимости от типа устройства
-                    icon = "🖨️" if any(keyword in model.lower() for keyword in ['printer', 'принтер', 'hp', 'canon', 'xerox', 'brother']) else "🖥️"
-                    if any(keyword in model.lower() for keyword in ['laptop', 'ноутбук', 'notebook']):
-                        icon = "💻"
+                    # Определяем иконку и наличие в базе картриджей
+                    cartridge_icon = ""
+                    cartridge_info = ""
+
+                    # Проверяем наличие в базе данных картриджей
+                    try:
+                        compatibility = cartridge_database.find_printer_compatibility(model)
+                        if compatibility:
+                            cartridge_icon = "🔧"  # Иконка для принтеров с известными картриджами
+                            cartridge_info = f" ({len(compatibility.compatible_models)} картриджей)"
+                            if compatibility.is_color:
+                                cartridge_icon = "🎨"  # Цветной принтер
+                    except:
+                        pass
+
+                    # Базовая иконка типа устройства
+                    if any(keyword in model.lower() for keyword in ['printer', 'принтер', 'hp', 'canon', 'xerox', 'brother']):
+                        base_icon = "🖨️"
+                    elif any(keyword in model.lower() for keyword in ['laptop', 'ноутбук', 'notebook']):
+                        base_icon = "💻"
                     elif any(keyword in model.lower() for keyword in ['monitor', 'монитор']):
-                        icon = "🖥️"
+                        base_icon = "🖥️"
                     elif any(keyword in model.lower() for keyword in ['scanner', 'сканер']):
-                        icon = "📷"
+                        base_icon = "📷"
                     elif any(keyword in model.lower() for keyword in ['mfp', 'mfc', 'муфта']):
-                        icon = "📠"
+                        base_icon = "📠"
+                    else:
+                        base_icon = "🖥️"
+
+                    # Комбинируем иконки
+                    final_icon = f"{cartridge_icon}{base_icon}" if cartridge_icon else base_icon
 
                     keyboard.append([InlineKeyboardButton(
-                        f"{icon} {display_model}",
+                        f"{final_icon} {display_model}{cartridge_info if cartridge_info and len(display_model) + len(cartridge_info) <= 40 else ''}",
                         callback_data=f"{mode}_model:{idx}"
                     )])
 
@@ -254,15 +306,25 @@ async def show_model_suggestions(
 
                 reply_markup = InlineKeyboardMarkup(keyboard)
 
-                # Улучшенное сообщение с информацией о поиске
+                # Улучшенное сообщение с информацией о поиске и базе данных картриджей
                 search_info = []
+                cartridge_count = len([s for s in suggestions if cartridge_database.find_printer_compatibility(s) is not None])
+
                 if len(model_name.split()) > 1:
                     search_info.append(f"по словам: {' + '.join(model_name.split())}")
+
                 search_info.append(f"всего найдено: {len(suggestions)}")
+                if cartridge_count > 0:
+                    search_info.append(f"🔧 с картриджами: {cartridge_count}")
+
+                # Дополнительная информация о базе картриджей
+                info_text = ""
+                if cartridge_count > 0:
+                    info_text = f"\n💡 <i>Модели с иконкой 🔧/🎨 имеют информацию о совместимых картриджах</i>"
 
                 await update.message.reply_text(
                     f"🔎 <b>Найдены модели</b> по запросу <code>{model_name}</code>\n"
-                    f"📊 {' | '.join(search_info)}\n\n"
+                    f"📊 {' | '.join(search_info)}{info_text}\n\n"
                     f"Выберите из списка или введите вручную:",
                     parse_mode='HTML',
                     reply_markup=reply_markup

@@ -188,7 +188,7 @@ async def work_printer_model_input(update: Update, context: ContextTypes.DEFAULT
     Обработчик ввода модели принтера с подсказками
     """
     from bot.handlers.suggestions_handler import show_model_suggestions
-    from bot.services.printer_component_detector import component_detector
+    from bot.services.enhanced_printer_detector import enhanced_detector
 
     model = update.message.text.strip()
 
@@ -209,29 +209,95 @@ async def work_printer_model_input(update: Update, context: ContextTypes.DEFAULT
     context.user_data['work_printer_model'] = model
 
     # Отправляем сообщение о проверке компонентов
-    status_msg = await update.message.reply_text(
-        "🔍 Анализирую модель принтера и доступные компоненты..."
-    )
+    source_text = ""
 
-    # Определяем доступные компоненты через LLM
+    # Отправляем статусное сообщение
+    status_msg = await update.message.reply_text("🔍 Анализирую модель принтера и доступные компоненты...")
+
     try:
-        components_data = component_detector.detect_printer_components(model)
+        # Используем базу данных картриджей вместо LLM
+        from bot.services.cartridge_database import cartridge_database
+
+        # Проверяем наличие принтера в базе данных картриджей
+        compatibility = cartridge_database.find_printer_compatibility(model)
+
+        if compatibility:
+            # Данные найдены в базе данных картриджей
+            components_data = {
+                'color': compatibility.is_color,
+                'components': {comp: True for comp in compatibility.components},
+                'component_list': compatibility.components,
+                'cartridges': [
+                    {
+                        'model': cart.model,
+                        'color': cart.color,
+                        'description': cart.description,
+                        'page_yield': cart.page_yield,
+                        'oem_part': cart.oem_part,
+                        'is_oem': cart.model == compatibility.oem_cartridge
+                    }
+                    for cart in compatibility.compatible_models
+                ],
+                'oem_cartridge': compatibility.oem_cartridge,
+                'source': 'database'
+            }
+
+            source_text = f"\n🎯 Информация из базы данных картриджей"
+            if compatibility.oem_cartridge:
+                source_text += f"\n📦 OEM картридж: {compatibility.oem_cartridge}"
+
+            logger.info(f"Found printer {model} in cartridge database: {len(compatibility.compatible_models)} cartridges")
+        else:
+            # Принтер не найден в базе, используем улучшенный детектор как запасной вариант
+            logger.info(f"Printer {model} not found in cartridge database, using enhanced detector")
+            components_data = enhanced_detector.detect_printer_components(model)
+            source_text = "\n⚠️ Модель не найдена в базе данных, использован AI-анализ"
 
         # Сохраняем результат определения
         context.user_data['printer_components'] = components_data
         context.user_data['printer_is_color'] = components_data['color']
-
-        # Удаляем сообщение о проверке
-        try:
-            await status_msg.delete()
-        except:
-            pass
-
-        # Показываем выбор компонентов
-        return await show_component_selection(update, context, components_data)
+        context.user_data['printer_cartridges'] = components_data.get('cartridges', [])
+        context.user_data['detection_source'] = components_data.get('source', 'unknown')
 
     except Exception as e:
         logger.error(f"Error detecting components for {model}: {e}")
+        source_text = "\n❌ Ошибка определения, используются базовые компоненты"
+
+        # При ошибке используем базовые компоненты
+        components_data = {
+            "color": False,
+            "components": {
+                "cartridge": True,
+                "fuser": True,
+                "drum": True
+            },
+            "component_list": ["cartridge", "fuser", "drum"],
+            "source": "fallback"
+        }
+
+        context.user_data['printer_components'] = components_data
+        context.user_data['printer_is_color'] = False
+        context.user_data['printer_cartridges'] = []
+        context.user_data['detection_source'] = 'fallback'
+
+    # Удаляем статусное сообщение
+    try:
+        await status_msg.delete()
+    except:
+        pass
+
+    # Если есть точные данные о картриджах, покажем их
+    if context.user_data.get('printer_cartridges') and context.user_data.get('detection_source') == 'database':
+        await update.message.reply_text(
+            f"✅ Модель определена{source_text}"
+        )
+        return await show_cartridge_selection_with_models(update, context)
+    else:
+        await update.message.reply_text(
+            f"✅ Модель определена{source_text}"
+        )
+        # Показываем выбор компонентов
+        return await show_component_selection(update, context, components_data)
 
         # Удаляем сообщение о проверке
         try:
@@ -259,6 +325,68 @@ async def work_printer_model_input(update: Update, context: ContextTypes.DEFAULT
         )
 
         return await show_component_selection(update, context, components_data)
+
+
+@handle_errors
+async def show_cartridge_selection_with_models(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Показывает меню выбора картриджей с конкретными моделями из базы данных
+    """
+    from bot.services.enhanced_printer_detector import enhanced_detector
+
+    model = context.user_data.get('work_printer_model', 'неизвестная модель')
+    cartridges = context.user_data.get('printer_cartridges', [])
+    is_color = context.user_data.get('printer_is_color', False)
+
+    # Группируем картриджи по цветам
+    cartridges_by_color = {}
+    for cart in cartridges:
+        color = cart['color']
+        if color not in cartridges_by_color:
+            cartridges_by_color[color] = []
+        cartridges_by_color[color].append(cart)
+
+    # Формируем сообщение
+    message_text = (
+        f"🖨️ Модель принтера: {model}\n"
+        f"📊 Тип: {'🎨 Цветной принтер' if is_color else '⚫ Черно-белый принтер'}\n"
+        f"🎯 Информация из базы данных картриджей\n\n"
+        f"📦 Выберите картридж для замены:"
+    )
+
+    # Создаем клавиатуру с картриджами
+    keyboard = []
+
+    # Показываем картриджи по цветам
+    for color, color_cartridges in cartridges_by_color.items():
+        for cart in color_cartridges:
+            oem_mark = " (OEM)" if cart.get('is_oem') else ""
+            yield_info = f" - {cart.get('page_yield', '?')} стр." if cart.get('page_yield') else ""
+
+            button_text = f"📦 {cart['model']}{oem_mark}\n  {color}{yield_info}"
+            callback_data = f"cartridge_model:{cart['model']}:{color}"
+
+            keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+
+    # Добавляем другие компоненты
+    components = context.user_data.get('printer_components', {}).get('components', {})
+    if components.get('fuser'):
+        keyboard.append([InlineKeyboardButton("🔥 Фьюзер (печка)", callback_data="component:fuser")])
+    if components.get('photoconductor'):
+        keyboard.append([InlineKeyboardButton("🥁 Фотобарабан (ОПК)", callback_data="component:photoconductor")])
+    if components.get('waste_toner'):
+        keyboard.append([InlineKeyboardButton("🗑️ Контейнер отраб. тонера", callback_data="component:waste_toner")])
+    if components.get('transfer_belt'):
+        keyboard.append([InlineKeyboardButton("📼 Трансферный ремень", callback_data="component:transfer_belt")])
+
+    # Кнопка отмены
+    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="component:cancel")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(message_text, reply_markup=reply_markup)
+
+    return States.WORK_COMPONENT_SELECTION
 
 
 @handle_errors
@@ -561,6 +689,47 @@ async def handle_component_selection_logic(update: Update, context: ContextTypes
 
 
 @handle_errors
+async def lookup_component_model(printer_model: str, component_type: str) -> str:
+    """
+    Ищет модель компонента в базе данных картриджей
+
+    Args:
+        printer_model: Модель принтера
+        component_type: Тип компонента (fuser, photoconductor, waste_toner, transfer_belt)
+
+    Returns:
+        Модель компонента или пустая строка если не найдена
+    """
+    try:
+        from bot.services.cartridge_database import cartridge_database
+
+        # Ищем совместимость принтера
+        compatibility = cartridge_database.find_printer_compatibility(printer_model)
+
+        if compatibility:
+            # Выбираем соответствующее поле в зависимости от типа компонента
+            if component_type == 'fuser':
+                if compatibility.fuser_models and len(compatibility.fuser_models) > 0:
+                    return compatibility.fuser_models[0]
+            elif component_type in ['photoconductor', 'drum']:
+                if compatibility.photoconductor_models and len(compatibility.photoconductor_models) > 0:
+                    return compatibility.photoconductor_models[0]
+            elif component_type == 'waste_toner':
+                if compatibility.waste_toner_models and len(compatibility.waste_toner_models) > 0:
+                    return compatibility.waste_toner_models[0]
+            elif component_type == 'transfer_belt':
+                if compatibility.transfer_belt_models and len(compatibility.transfer_belt_models) > 0:
+                    return compatibility.transfer_belt_models[0]
+
+        logger.warning(f"Модель для компонента {component_type} принтера {printer_model} не найдена")
+        return ''
+
+    except Exception as e:
+        logger.error(f"Ошибка при поиске модели компонента {component_type} для {printer_model}: {e}")
+        return ''
+
+
+@handle_errors
 async def handle_component_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     Обработчик выбора компонента из callback
@@ -569,25 +738,93 @@ async def handle_component_selection(update: Update, context: ContextTypes.DEFAU
     await query.answer()
 
     data = query.data
-    if not data.startswith('component:'):
-        return States.WORK_COMPONENT_SELECTION
 
-    component_type = data.split(':')[1]
+    # Обработка выбора конкретной модели картриджа
+    if data.startswith('cartridge_model:'):
+        parts = data.split(':', 2)
+        if len(parts) >= 3:
+            cartridge_model = parts[1]
+            cartridge_color = parts[2]
 
-    if component_type == 'cancel':
-        # Отмена операции
-        await query.edit_message_text("❌ Операция отменена")
-        return ConversationHandler.END
+            # Сохраняем выбранный картридж
+            context.user_data['work_component_type'] = 'cartridge'
+            context.user_data['work_cartridge_model'] = cartridge_model
+            context.user_data['work_cartridge_color'] = cartridge_color
 
-    # Обратная совместимость: конвертируем drum в photoconductor
-    if component_type == 'drum':
-        component_type = 'photoconductor'
+            # Показываем подтверждение
+            return await show_cartridge_model_confirmation(update, context, cartridge_model, cartridge_color)
 
-    # Сохраняем выбранный компонент
-    context.user_data['work_component_type'] = component_type
+    # Обработка обычных компонентов
+    if data.startswith('component:'):
+        component_type = data.split(':')[1]
 
-    # Обрабатываем выбор компонента
-    return await handle_component_selection_logic(update, context, component_type)
+        if component_type == 'cancel':
+            # Отмена операции
+            await query.edit_message_text("❌ Операция отменена")
+            return ConversationHandler.END
+
+        # Обратная совместимость: конвертируем drum в photoconductor
+        if component_type == 'drum':
+            component_type = 'photoconductor'
+
+        # Сохраняем выбранный компонент
+        context.user_data['work_component_type'] = component_type
+
+        # Ищем модель компонента в базе данных для non-cartridge компонентов
+        if component_type != 'cartridge':
+            printer_model = context.user_data.get('work_printer_model', '')
+            component_model = await lookup_component_model(printer_model, component_type)
+            if component_model:
+                context.user_data['work_cartridge_model'] = component_model
+                logger.info(f"Найдена модель {component_type} для {printer_model}: {component_model}")
+
+        # Обрабатываем выбор компонента
+        return await handle_component_selection_logic(update, context, component_type)
+
+    return States.WORK_COMPONENT_SELECTION
+
+
+@handle_errors
+async def show_cartridge_model_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, cartridge_model: str, cartridge_color: str) -> int:
+    """
+    Показывает подтверждение для выбора конкретной модели картриджа
+    """
+    branch = context.user_data.get('work_branch', '')
+    location = context.user_data.get('work_location', '')
+    printer_model = context.user_data.get('work_printer_model', '')
+
+    confirmation_text = (
+        "📋 <b>Подтверждение замены картриджа</b>\n\n"
+        f"📍 <b>Филиал:</b> {branch}\n"
+        f"📍 <b>Локация:</b> {location}\n"
+        f"🖨️ <b>Модель принтера:</b> {printer_model}\n"
+        f"📦 <b>Модель картриджа:</b> {cartridge_model}\n"
+        f"🎨 <b>Цвет:</b> {cartridge_color}\n\n"
+        "❓ Сохранить эти данные?"
+    )
+
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Сохранить", callback_data="confirm_work"),
+            InlineKeyboardButton("❌ Отменить", callback_data="cancel_work")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if update.callback_query:
+        await update.callback_query.message.reply_text(
+            confirmation_text,
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+    else:
+        await update.message.reply_text(
+            confirmation_text,
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+
+    return States.WORK_CONFIRMATION
 
 
 @handle_errors
@@ -608,8 +845,45 @@ async def handle_cartridge_color(update: Update, context: ContextTypes.DEFAULT_T
     }
     
     context.user_data['work_cartridge_color'] = color_names.get(color, color)
-    
-    await query.edit_message_text(f"✅ Выбран цвет: {color_names.get(color, color)}")
+
+    # Определяем модель картриджа для выбранного цвета
+    cartridge_model = ''
+    try:
+        from bot.services.cartridge_database import cartridge_database
+        printer_model = context.user_data.get('work_printer_model', '')
+        selected_color = color_names.get(color, color)
+
+        if printer_model:
+            cartridges = cartridge_database.get_cartridges_for_printer(printer_model)
+
+            # Пробуем разные варианты названий цветов (как в export.py)
+            color_variants = [selected_color]
+            if selected_color == 'Синий (Cyan)':
+                color_variants.extend(['Синий', 'Cyan'])
+            elif selected_color == 'Желтый (Yellow)':
+                color_variants.extend(['Желтый', 'Yellow'])
+            elif selected_color == 'Пурпурный (Magenta)':
+                color_variants.extend(['Пурпурный', 'Magenta'])
+
+            color_cartridges = []
+            for color_variant in color_variants:
+                found = [cart for cart in cartridges if cart.color.lower() == color_variant.lower()]
+                if found:
+                    color_cartridges.extend(found)
+                    break
+
+            if color_cartridges:
+                cartridge_model = color_cartridges[0].model
+                context.user_data['work_cartridge_model'] = cartridge_model
+                context.user_data['detection_source'] = 'database'  # Указываем, что данные из базы
+                logger.info(f"Selected cartridge model for {printer_model} ({selected_color}): {cartridge_model}")
+                logger.info(f"Found match using color variant: {color_variant}")
+    except Exception as e:
+        logger.error(f"Error determining cartridge model for color {color}: {e}")
+        cartridge_model = ''
+
+    await query.edit_message_text(f"✅ Выбран цвет: {color_names.get(color, color)}" +
+                                   (f"\n📦 Модель картриджа: {cartridge_model}" if cartridge_model else ""))
     
     # Показываем подтверждение
     if context.user_data.get('work_component_type') == 'cartridge':
@@ -649,12 +923,19 @@ async def show_work_confirmation(update: Update, context: ContextTypes.DEFAULT_T
         title = f"замены {component_name.lower()}"
         color_field = f"⚙️ <b>Тип компонента:</b> {component_name}"
 
+    # Добавляем модель компонента если есть
+    component_model = context.user_data.get('work_cartridge_model', '')
+    model_field = ""
+    if component_model:
+        model_field = f"📦 <b>Модель {component_name.lower()}:</b> {component_model}\n"
+
     confirmation_text = (
         f"📋 <b>Подтверждение {title}</b>\n\n"
         f"📍 <b>Филиал:</b> {branch}\n"
         f"📍 <b>Локация:</b> {location}\n"
         f"🖨️ <b>Модель принтера:</b> {printer_model}\n"
-        f"{color_field}\n\n"
+        f"{color_field}\n"
+        f"{model_field}"
         "❓ Сохранить эти данные?"
     )
 
@@ -691,13 +972,15 @@ async def show_cartridge_confirmation(update: Update, context: ContextTypes.DEFA
     location = context.user_data.get('work_location', '')
     printer_model = context.user_data.get('work_printer_model', '')
     cartridge_color = context.user_data.get('work_cartridge_color', '')
-    
+    cartridge_model = context.user_data.get('work_cartridge_model', '')
+
     confirmation_text = (
         "📋 <b>Подтверждение замены комплектующих</b>\n\n"
         f"📍 <b>Филиал:</b> {branch}\n"
         f"📍 <b>Локация:</b> {location}\n"
         f"🖨️ <b>Модель принтера:</b> {printer_model}\n"
-        f"🎨 <b>Цвет картриджа:</b> {cartridge_color}\n\n"
+        f"🎨 <b>Цвет картриджа:</b> {cartridge_color}\n"
+        + (f"📦 <b>Модель картриджа:</b> {cartridge_model}\n" if cartridge_model else "") +
         "❓ Сохранить эти данные?"
     )
     
@@ -847,13 +1130,18 @@ async def save_component_replacement(context: ContextTypes.DEFAULT_TYPE) -> bool
         else:
             component_color = context.user_data.get('work_component_color', 'Универсальный')
 
-        # Создаем новую запись с новой структурой
+        # Создаем новую запись с расширенной информацией о картриджах
         record = {
             'branch': context.user_data.get('work_branch', ''),
             'location': context.user_data.get('work_location', ''),
             'printer_model': context.user_data.get('work_printer_model', ''),
             'component_type': component_type,  # NEW
             'component_color': component_color,  # Переименовано с cartridge_color
+            # Добавляем модель картриджа если есть
+            'cartridge_model': context.user_data.get('work_cartridge_model', ''),
+            # Добавляем детальную информацию о картридже из базы данных
+            'detection_source': context.user_data.get('detection_source', 'unknown'),
+            'printer_is_color': context.user_data.get('printer_is_color', False),
             # Для обратной совместимости оставляем старое поле
             'cartridge_color': component_color if component_type == 'cartridge' else '',
             'db_name': db_name,
