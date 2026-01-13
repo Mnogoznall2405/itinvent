@@ -1485,50 +1485,50 @@ async def handle_work_model_suggestion(update: Update, context: ContextTypes.DEF
 
                         # Определяем доступные компоненты через LLM
                         try:
-                        components_data = component_detector.detect_printer_components(selected_model)
+                            components_data = component_detector.detect_printer_components(selected_model)
 
-                        # Сохраняем результат определения
-                        context.user_data['printer_components'] = components_data
-                        context.user_data['printer_is_color'] = components_data['color']
+                            # Сохраняем результат определения
+                            context.user_data['printer_components'] = components_data
+                            context.user_data['printer_is_color'] = components_data['color']
 
-                        # Удаляем сообщение о проверке
-                        try:
-                            await status_msg.delete()
-                        except:
-                            pass
+                            # Удаляем сообщение о проверке
+                            try:
+                                await status_msg.delete()
+                            except:
+                                pass
 
-                        # Показываем выбор компонентов
-                        return await show_component_selection(update, context, components_data)
+                            # Показываем выбор компонентов
+                            return await show_component_selection(update, context, components_data)
 
-                    except Exception as e:
-                        logger.error(f"Error detecting components for {selected_model}: {e}")
+                        except Exception as e:
+                            logger.error(f"Error detecting components for {selected_model}: {e}")
 
-                        # Удаляем сообщение о проверке
-                        try:
-                            await status_msg.delete()
-                        except:
-                            pass
+                            # Удаляем сообщение о проверке
+                            try:
+                                await status_msg.delete()
+                            except:
+                                pass
 
-                        # При ошибке используем базовые компоненты
-                        components_data = {
-                            "color": False,
-                            "components": {
-                                "cartridge": True,
-                                "fuser": True,
-                                "drum": True
-                            },
-                            "component_list": ["cartridge", "fuser", "drum"]
-                        }
+                            # При ошибке используем базовые компоненты
+                            components_data = {
+                                "color": False,
+                                "components": {
+                                    "cartridge": True,
+                                    "fuser": True,
+                                    "drum": True
+                                },
+                                "component_list": ["cartridge", "fuser", "drum"]
+                            }
 
-                        context.user_data['printer_components'] = components_data
-                        context.user_data['printer_is_color'] = False
+                            context.user_data['printer_components'] = components_data
+                            context.user_data['printer_is_color'] = False
 
-                        await query.message.reply_text(
-                            "⚠️ Не удалось получить полную информацию о компонентах.\n"
-                            "Доступны базовые компоненты: картридж, фьюзер, фотобарабан."
-                        )
+                            await query.message.reply_text(
+                                "⚠️ Не удалось получить полную информацию о компонентах.\n"
+                                "Доступны базовые компоненты: картридж, фьюзер, фотобарабан."
+                            )
 
-                        return await show_component_selection(update, context, components_data)
+                            return await show_component_selection(update, context, components_data)
                 elif work_type == 'equipment':
                     suggestions = context.user_data.get('work_equipment_model_suggestions', [])
                     if 0 <= idx < len(suggestions):
