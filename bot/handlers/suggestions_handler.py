@@ -55,12 +55,18 @@ async def handle_employee_suggestion_generic(
             if 0 <= idx < len(suggestions):
                 selected_name = suggestions[idx]
                 context.user_data[storage_key] = selected_name
-                
+
                 await query.edit_message_text(f"✅ Выбран сотрудник: {selected_name}")
-                
+
                 if next_message:
-                    await query.message.reply_text(next_message)
-                
+                    # Используем edit_message_text вместо reply_text если query.message недоступен
+                    if query.message:
+                        await query.message.reply_text(next_message)
+                    else:
+                        # Если message недоступен, добавляем к текущему сообщению
+                        current_text = query.message.text if query.message else ""
+                        await query.edit_message_text(f"{current_text}\n\n{next_message}")
+
                 return next_state
         except (ValueError, IndexError) as e:
             logger.error(f"Ошибка обработки выбора сотрудника ({mode}): {e}")
@@ -82,13 +88,18 @@ async def handle_employee_suggestion_generic(
                 "Пожалуйста, введите корректное ФИО."
             )
             return next_state - 1
-        
+
         context.user_data[storage_key] = pending
         await query.edit_message_text(f"✅ Принято: {pending}")
-        
+
         if next_message:
-            await query.message.reply_text(next_message)
-        
+            # Используем edit_message_text вместо reply_text если query.message недоступен
+            if query.message:
+                await query.message.reply_text(next_message)
+            else:
+                # Если message недоступен, отправляем в чат напрямую
+                await query.edit_message_text(f"{query.message.text}\n\n{next_message}" if query.message else next_message)
+
         return next_state
     
     # Обработка "Обновить список"

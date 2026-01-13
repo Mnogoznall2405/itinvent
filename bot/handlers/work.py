@@ -1265,15 +1265,21 @@ async def handle_work_branch_suggestion(update: Update, context: ContextTypes.DE
     
     elif data.startswith('work_branch:'):
         try:
-            idx = int(data.split(':', 1)[1])
-            suggestions = context.user_data.get('work_branch_suggestions', [])
-            
-            if 0 <= idx < len(suggestions):
-                selected_branch = suggestions[idx]
-                context.user_data['work_branch'] = selected_branch
-                await query.edit_message_text(f"✅ Выбран филиал: {selected_branch}")
-                await query.message.reply_text("📍 Введите локацию:")
-                return States.WORK_LOCATION_INPUT
+            # Пропускаем обработку для refresh и manual
+            action = data.split(':', 1)[1] if ':' in data else ''
+            if action in ['refresh', 'manual']:
+                # Эти действия обрабатываются отдельно выше
+                pass
+            else:
+                idx = int(action)
+                suggestions = context.user_data.get('work_branch_suggestions', [])
+
+                if 0 <= idx < len(suggestions):
+                    selected_branch = suggestions[idx]
+                    context.user_data['work_branch'] = selected_branch
+                    await query.edit_message_text(f"✅ Выбран филиал: {selected_branch}")
+                    await query.message.reply_text("📍 Введите локацию:")
+                    return States.WORK_LOCATION_INPUT
         except (ValueError, IndexError) as e:
             logger.error(f"Ошибка обработки выбора филиала: {e}")
     
@@ -1305,20 +1311,26 @@ async def handle_work_location_suggestion(update: Update, context: ContextTypes.
     
     elif data.startswith('work_loc:'):
         try:
-            idx = int(data.split(':', 1)[1])
-            suggestions = context.user_data.get('work_location_suggestions', [])
-            
-            if 0 <= idx < len(suggestions):
-                selected_location = suggestions[idx]
-                context.user_data['work_location'] = selected_location
-                await query.edit_message_text(f"✅ Выбрана локация: {selected_location}")
-                
-                if work_type == 'cartridge':
-                    await query.message.reply_text("🖨️ Введите модель принтера:")
-                    return States.WORK_PRINTER_MODEL_INPUT
-                else:
-                    await query.message.reply_text("🔧 Введите тип оборудования:")
-                    return States.WORK_EQUIPMENT_TYPE_INPUT
+            # Пропускаем обработку для refresh и manual
+            action = data.split(':', 1)[1] if ':' in data else ''
+            if action in ['refresh', 'manual']:
+                # Эти действия обрабатываются отдельно выше
+                pass
+            else:
+                idx = int(action)
+                suggestions = context.user_data.get('work_location_suggestions', [])
+
+                if 0 <= idx < len(suggestions):
+                    selected_location = suggestions[idx]
+                    context.user_data['work_location'] = selected_location
+                    await query.edit_message_text(f"✅ Выбрана локация: {selected_location}")
+
+                    if work_type == 'cartridge':
+                        await query.message.reply_text("🖨️ Введите модель принтера:")
+                        return States.WORK_PRINTER_MODEL_INPUT
+                    else:
+                        await query.message.reply_text("🔧 Введите тип оборудования:")
+                        return States.WORK_EQUIPMENT_TYPE_INPUT
         except (ValueError, IndexError) as e:
             logger.error(f"Ошибка обработки выбора локации: {e}")
     
@@ -1451,25 +1463,28 @@ async def handle_work_model_suggestion(update: Update, context: ContextTypes.DEF
                     except Exception as e:
                         logger.error(f"Ошибка при обновлении подсказок: {e}")
         try:
-            idx = int(data.split(':', 1)[1])
-            
-            if work_type == 'cartridge':
-                suggestions = context.user_data.get('work_printer_model_suggestions', [])
-                if 0 <= idx < len(suggestions):
-                    selected_model = suggestions[idx]
-                    context.user_data['work_printer_model'] = selected_model
-                    await query.edit_message_text(f"✅ Выбрана модель: {selected_model}")
+            # Пропускаем обработку для refresh и manual
+            action = data.split(':', 1)[1] if ':' in data else ''
+            if action not in ['refresh', 'manual']:
+                idx = int(action)
 
-                    # Используем новую компонентную детекцию
-                    from bot.services.printer_component_detector import component_detector
+                if work_type == 'cartridge':
+                    suggestions = context.user_data.get('work_printer_model_suggestions', [])
+                    if 0 <= idx < len(suggestions):
+                        selected_model = suggestions[idx]
+                        context.user_data['work_printer_model'] = selected_model
+                        await query.edit_message_text(f"✅ Выбрана модель: {selected_model}")
 
-                    # Отправляем сообщение о проверке компонентов
-                    status_msg = await query.message.reply_text(
-                        "🔍 Анализирую модель принтера и доступные компоненты..."
-                    )
+                        # Используем новую компонентную детекцию
+                        from bot.services.printer_component_detector import component_detector
 
-                    # Определяем доступные компоненты через LLM
-                    try:
+                        # Отправляем сообщение о проверке компонентов
+                        status_msg = await query.message.reply_text(
+                            "🔍 Анализирую модель принтера и доступные компоненты..."
+                        )
+
+                        # Определяем доступные компоненты через LLM
+                        try:
                         components_data = component_detector.detect_printer_components(selected_model)
 
                         # Сохраняем результат определения
@@ -1514,18 +1529,18 @@ async def handle_work_model_suggestion(update: Update, context: ContextTypes.DEF
                         )
 
                         return await show_component_selection(update, context, components_data)
-            else:
-                suggestions = context.user_data.get('work_equipment_model_suggestions', [])
-                if 0 <= idx < len(suggestions):
-                    selected_model = suggestions[idx]
-                    context.user_data['work_equipment_model'] = selected_model
-                    await query.edit_message_text(f"✅ Выбрана модель: {selected_model}")
-                    
-                    from telegram import Message
-                    temp_message = query.message
-                    temp_update = Update(update.update_id, message=temp_message)
-                    await show_installation_confirmation(temp_update, context)
-                    return States.WORK_CONFIRMATION
+                elif work_type == 'equipment':
+                    suggestions = context.user_data.get('work_equipment_model_suggestions', [])
+                    if 0 <= idx < len(suggestions):
+                        selected_model = suggestions[idx]
+                        context.user_data['work_equipment_model'] = selected_model
+                        await query.edit_message_text(f"✅ Выбрана модель: {selected_model}")
+
+                        from telegram import Message
+                        temp_message = query.message
+                        temp_update = Update(update.update_id, message=temp_message)
+                        await show_installation_confirmation(temp_update, context)
+                        return States.WORK_CONFIRMATION
         except (ValueError, IndexError) as e:
             logger.error(f"Ошибка обработки выбора модели: {e}")
     
