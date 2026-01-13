@@ -157,16 +157,29 @@ async def generate_transfer_act_pdf(
         pdf_path = os.path.join(acts_dir, pdf_filename)
         
         try:
-            convert(docx_path, pdf_path)
+            # Запускаем конвертацию в отдельном потоке с таймаутом
+            loop = asyncio.get_event_loop()
+
+            # Конвертируем с таймаутом 60 секунд
+            await asyncio.wait_for(
+                loop.run_in_executor(None, convert, docx_path, pdf_path),
+                timeout=60.0
+            )
+
             logger.info(f"PDF-акт создан: {pdf_path}")
-            
+
             # Удаляем временный DOCX
             if os.path.exists(docx_path):
                 os.remove(docx_path)
                 logger.info(f"Временный DOCX удален: {docx_path}")
-            
+
             return pdf_path
-            
+
+        except asyncio.TimeoutError:
+            logger.error(f"Таймаут конвертации DOCX в PDF (превышено 60 секунд)")
+            # Если конвертация не удалась по таймауту, возвращаем DOCX
+            logger.warning(f"Возвращаем DOCX вместо PDF из-за таймаута: {docx_path}")
+            return docx_path
         except Exception as e:
             logger.error(f"Ошибка конвертации DOCX в PDF: {e}")
             # Если конвертация не удалась, возвращаем DOCX
