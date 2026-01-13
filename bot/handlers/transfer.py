@@ -4,11 +4,13 @@
 Обработчики перемещения оборудования с актом приема-передачи
 Загрузка фотографий, распознавание серийных номеров, генерация PDF-акта.
 """
+import asyncio
 import logging
 import os
 from datetime import datetime
 from telegram import Update, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
+from telegram.error import TimedOut
 
 from bot.config import States, Messages, StorageKeys
 from bot.utils.decorators import require_user_access, handle_errors
@@ -21,6 +23,58 @@ logger = logging.getLogger(__name__)
 
 # Глобальный менеджер данных
 equipment_manager = EquipmentDataManager()
+
+
+async def send_document_with_retry(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    document_path: str,
+    filename: str,
+    caption: str,
+    max_retries: int = 3
+) -> bool:
+    """
+    Отправляет документ с автоматическим повтором при timed out ошибке
+
+    Параметры:
+        context: Контекст выполнения бота
+        chat_id: ID чата для отправки
+        document_path: Путь к файлу
+        filename: Имя файла
+        caption: Подпись к документу
+        max_retries: Максимальное количество попыток
+
+    Возвращает:
+        bool: True если успешно отправлено, False иначе
+    """
+    for attempt in range(max_retries):
+        try:
+            with open(document_path, 'rb') as doc_file:
+                await context.bot.send_document(
+                    chat_id=chat_id,
+                    document=doc_file,
+                    filename=filename,
+                    caption=caption
+                )
+            logger.info(f"Документ успешно отправлен с попытки {attempt + 1}")
+            return True
+
+        except TimedOut as e:
+            logger.warning(f"Попытка {attempt + 1}/{max_retries}: Таймаут отправки документа {filename}")
+            if attempt < max_retries - 1:
+                # Ждем перед следующей попыткой
+                wait_time = (attempt + 1) * 2  # 2, 4, 6 секунд
+                logger.info(f"Ждем {wait_time} сек. перед повторной попыткой...")
+                await asyncio.sleep(wait_time)
+            else:
+                logger.error(f"Не удалось отправить документ после {max_retries} попыток")
+
+        except Exception as e:
+            logger.error(f"Ошибка отправки документа {filename}: {e}")
+            # Другие ошибки не retry'им
+            break
+
+    return False
 
 
 @require_user_access
@@ -421,29 +475,31 @@ async def handle_transfer_confirmation(update: Update, context: ContextTypes.DEF
                 
                 if act_info.get('success') and act_info.get('pdf_path'):
                     pdf_path = act_info['pdf_path']
-                    
+
                     if os.path.exists(pdf_path):
-                        try:
-                            # Отправляем PDF пользователю с подписью
-                            with open(pdf_path, 'rb') as pdf_file:
-                                await context.bot.send_document(
-                                    chat_id=query.message.chat_id,
-                                    document=pdf_file,
-                                    filename=act_info.get('filename', os.path.basename(pdf_path)),
-                                    caption=f"✅ Акт приема-передачи\n"
-                                           f"От: {old_employee}\n"
-                                           f"Кому: {new_employee}"
-                                )
-                            
+                        # Отправляем PDF с автоматическим retry при timed out
+                        caption = f"✅ Акт приема-передачи\nОт: {old_employee}\nКому: {new_employee}"
+                        filename = act_info.get('filename', os.path.basename(pdf_path))
+
+                        sent = await send_document_with_retry(
+                            context=context,
+                            chat_id=query.message.chat_id,
+                            document_path=pdf_path,
+                            filename=filename,
+                            caption=caption,
+                            max_retries=3
+                        )
+
+                        if sent:
                             successful_acts.append(act_info)
-                            
+
                             # Сохраняем информацию о перемещениях для этой группы
                             equipment_list = grouped_equipment.get(old_employee, [])
                             for item in equipment_list:
                                 # Добавляем db_name в additional_data
                                 additional_data = item.get('equipment', {}).copy()
                                 additional_data['db_name'] = db_name
-                                
+
                                 equipment_manager.add_equipment_transfer(
                                     serial_number=item.get('serial', ''),
                                     new_employee=new_employee,
@@ -451,8 +507,9 @@ async def handle_transfer_confirmation(update: Update, context: ContextTypes.DEF
                                     additional_data=additional_data,
                                     act_pdf_path=pdf_path
                                 )
-                        except Exception as e:
-                            logger.error(f"Ошибка отправки акта для {old_employee}: {e}")
+                        else:
+                            # Не удалось отправить ни одной попыткой
+                            logger.error(f"Не удалось отправить акт для {old_employee} после всех попыток")
                             failed_acts.append(old_employee)
                     else:
                         logger.error(f"PDF файл не найден: {pdf_path}")

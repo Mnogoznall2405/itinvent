@@ -489,8 +489,17 @@ def main() -> None:
     logger.info("=" * 50)
     
     try:
-        # Создаем Application
-        application = Application.builder().token(config.telegram.bot_token).build()
+        # Создаем Application с увеличенным таймаутом
+        from telegram.request import BaseRequest
+        application = (
+            Application.builder()
+            .token(config.telegram.bot_token)
+            .connect_timeout(60.0)  # Таймаут соединения
+            .write_timeout(120.0)   # Таймаут записи
+            .read_timeout(120.0)    # Таймаут чтения
+            .pool_timeout(60.0)     # Таймаут пула соединений
+            .build()
+        )
         
         # Регистрируем обработчики
         register_handlers(application)
