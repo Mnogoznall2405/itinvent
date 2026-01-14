@@ -93,10 +93,11 @@ async def generate_transfer_act_pdf(
                 equipment = item.get('equipment', {})
                 serial = str(item.get('serial', 'Не указан'))
                 
-                # Получаем данные
-                type_name = str(equipment.get('TYPE_NAME', ''))
-                model_name = str(equipment.get('MODEL_NAME', 'Не указано'))
-                batch_no = equipment.get('BATCH_NO', '')
+                # Получаем данные с обработкой null значений
+                type_name = equipment.get('TYPE_NAME') or ''
+                model_name = equipment.get('MODEL_NAME') or 'Не указано'
+                # BATCH_NO может быть null, поэтому проверяем и заменяем на пустую строку
+                batch_no = equipment.get('BATCH_NO') or ''
                 
                 # Инвентарный номер - округляем до целого если это число
                 inv_no = equipment.get('INV_NO')
@@ -117,10 +118,10 @@ async def generate_transfer_act_pdf(
                 # Используем отдел НОВОГО сотрудника (получателя), а не старого
                 cells_data = [
                     str(idx),
-                    type_name,
-                    model_name,
+                    str(type_name) if type_name else '',
+                    str(model_name) if model_name else '',
                     serial,
-                    str(batch_no) if batch_no else '',
+                    str(batch_no),  # Теперь batch_no уже строка или пустая строка
                     str(new_employee_dept) if new_employee_dept else '',  # Отдел получателя
                     inv_no_str
                 ]
