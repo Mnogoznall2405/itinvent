@@ -225,11 +225,12 @@ class UniversalInventoryDB:
             # Основной SQL запрос для поиска по серийному номеру
             # Использует LEFT JOIN для получения связанной информации из справочников
             query_with_location = """
-            SELECT 
+            SELECT
                 i.ID,
                 i.SERIAL_NO,
                 i.HW_SERIAL_NO,
                 i.INV_NO,
+                i.BATCH_NO,
                 i.CI_TYPE,
                 t.TYPE_NAME,
                 i.MODEL_NO,
@@ -251,11 +252,12 @@ class UniversalInventoryDB:
             """
             
             query_without_location = """
-            SELECT 
+            SELECT
                 i.ID,
                 i.SERIAL_NO,
                 i.HW_SERIAL_NO,
                 i.INV_NO,
+                i.BATCH_NO,
                 i.CI_TYPE,
                 t.TYPE_NAME,
                 i.MODEL_NO,
@@ -1110,6 +1112,7 @@ class UniversalInventoryDB:
                     i.SERIAL_NO,
                     i.HW_SERIAL_NO,
                     i.INV_NO,
+                    i.BATCH_NO,
                     i.CI_TYPE,
                     t.TYPE_NAME,
                     i.MODEL_NO,
@@ -1137,6 +1140,7 @@ class UniversalInventoryDB:
                     i.SERIAL_NO,
                     i.HW_SERIAL_NO,
                     i.INV_NO,
+                    i.BATCH_NO,
                     i.CI_TYPE,
                     t.TYPE_NAME,
                     i.MODEL_NO,
