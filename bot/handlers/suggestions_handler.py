@@ -6,7 +6,7 @@
 Содержит общие функции для работы с подсказками сотрудников, моделей и т.д.
 """
 import logging
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from bot.services.suggestions import get_employee_suggestions
@@ -59,13 +59,15 @@ async def handle_employee_suggestion_generic(
                 await query.edit_message_text(f"✅ Выбран сотрудник: {selected_name}")
 
                 if next_message:
-                    # Используем edit_message_text вместо reply_text если query.message недоступен
+                    # Отправляем следующее сообщение
                     if query.message:
-                        await query.message.reply_text(next_message)
+                        await query.message.reply_text(next_message, parse_mode='HTML')
                     else:
-                        # Если message недоступен, добавляем к текущему сообщению
-                        current_text = query.message.text if query.message else ""
-                        await query.edit_message_text(f"{current_text}\n\n{next_message}")
+                        # Если message недоступен, отправляем через edit_message_text
+                        try:
+                            await query.edit_message_text(next_message, parse_mode='HTML')
+                        except Exception as e:
+                            logger.warning(f"Не удалось отправить следующее сообщение: {e}")
 
                 return next_state
         except (ValueError, IndexError) as e:
@@ -93,12 +95,15 @@ async def handle_employee_suggestion_generic(
         await query.edit_message_text(f"✅ Принято: {pending}")
 
         if next_message:
-            # Используем edit_message_text вместо reply_text если query.message недоступен
+            # Отправляем следующее сообщение
             if query.message:
-                await query.message.reply_text(next_message)
+                await query.message.reply_text(next_message, parse_mode='HTML')
             else:
-                # Если message недоступен, отправляем в чат напрямую
-                await query.edit_message_text(f"{query.message.text}\n\n{next_message}" if query.message else next_message)
+                # Если message недоступен, отправляем через edit_message_text
+                try:
+                    await query.edit_message_text(next_message, parse_mode='HTML')
+                except Exception as e:
+                    logger.warning(f"Не удалось отправить следующее сообщение: {e}")
 
         return next_state
     
@@ -722,5 +727,132 @@ async def show_branch_suggestions_for_work(
                     return True
         except Exception as e:
             logger.error(f"Ошибка при получении подсказок филиалов для работ: {e}")
-    
+
+    return False
+
+
+async def show_transfer_branch_suggestions(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    branch: str,
+    pending_key: str,
+    suggestions_key: str
+) -> bool:
+    """
+    Показывает подсказки для филиала при переносе оборудования
+
+    Параметры:
+        update: Объект обновления от Telegram API
+        context: Контекст выполнения
+        branch: Введённый филиал
+        pending_key: Ключ для временного хранения
+        suggestions_key: Ключ для хранения подсказок
+
+    Возвращает:
+        bool: True если подсказки показаны, False если нет
+    """
+    from bot.services.suggestions import get_branch_suggestions
+
+    logger.info(f"[TRANSFER_BRANCH] Введен филиал: '{branch}'")
+
+    # Сохраняем для подсказок
+    context.user_data[pending_key] = branch
+
+    # Показываем подсказки если есть текст
+    if len(branch) >= 1:
+        try:
+            user_id = update.effective_user.id
+            all_branches = get_branch_suggestions(user_id)
+
+            if all_branches:
+                # Фильтруем по введенному тексту
+                branch_lower = branch.lower()
+                suggestions = [b for b in all_branches if branch_lower in b.lower()]
+
+                if suggestions:
+                    context.user_data[suggestions_key] = suggestions
+
+                    # Создаем клавиатуру
+                    keyboard = []
+                    for idx, b in enumerate(suggestions[:8]):  # Максимум 8
+                        keyboard.append([InlineKeyboardButton(
+                            f"🏢 {b}",
+                            callback_data=f"transfer_branch:{idx}"
+                        )])
+
+                    keyboard.append([InlineKeyboardButton(
+                        "⌨️ Ввести как есть",
+                        callback_data="transfer_branch:manual"
+                    )])
+
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    await update.message.reply_text(
+                        "🔎 Найдены совпадения по филиалам. Выберите из списка или нажмите 'Ввести как есть'.",
+                        reply_markup=reply_markup
+                    )
+                    return True
+        except Exception as e:
+            logger.error(f"Ошибка при получении подсказок филиалов для transfer: {e}")
+
+    return False
+
+
+async def show_transfer_location_suggestions(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    location: str,
+    pending_key: str,
+    suggestions_key: str
+) -> bool:
+    """
+    Показывает подсказки для локации при переносе оборудования
+
+    Параметры:
+        update: Объект обновления от Telegram API
+        context: Контекст выполнения
+        location: Введённая локация
+        pending_key: Ключ для временного хранения
+        suggestions_key: Ключ для хранения подсказок
+
+    Возвращает:
+        bool: True если подсказки показаны, False если нет
+    """
+    from bot.services.suggestions import get_location_suggestions
+
+    logger.info(f"[TRANSFER_LOCATION] Введена локация: '{location}'")
+
+    # Сохраняем для подсказок
+    context.user_data[pending_key] = location
+
+    # Показываем подсказки если введено 2+ символов
+    if len(location) >= 2:
+        try:
+            user_id = update.effective_user.id
+            suggestions = get_location_suggestions(location, user_id)
+
+            if suggestions:
+                context.user_data[suggestions_key] = suggestions
+
+                # Создаем клавиатуру
+                keyboard = []
+                for idx, loc in enumerate(suggestions[:8]):  # Максимум 8
+                    keyboard.append([InlineKeyboardButton(
+                        f"📍 {loc}",
+                        callback_data=f"transfer_location:{idx}"
+                    )])
+
+                keyboard.append([InlineKeyboardButton(
+                    "⌨️ Ввести как есть",
+                    callback_data="transfer_location:manual"
+                )])
+
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await update.message.reply_text(
+                    "🔎 Найдены совпадения по локациям. Выберите из списка или нажмите 'Ввести как есть'.",
+                    reply_markup=reply_markup
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Ошибка при получении подсказок локаций для transfer: {e}")
+
     return False

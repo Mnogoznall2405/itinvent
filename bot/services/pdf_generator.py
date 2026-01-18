@@ -96,8 +96,8 @@ async def generate_transfer_act_pdf(
                 # Получаем данные с обработкой null значений
                 type_name = equipment.get('TYPE_NAME') or ''
                 model_name = equipment.get('MODEL_NAME') or 'Не указано'
-                # BATCH_NO может быть null, поэтому проверяем и заменяем на пустую строку
-                batch_no = equipment.get('BATCH_NO') or ''
+                # PART_NO - инвентарный номер, может быть null, поэтому проверяем и заменяем на пустую строку
+                batch_no = equipment.get('PART_NO') or ''
                 
                 # Инвентарный номер - округляем до целого если это число
                 inv_no = equipment.get('INV_NO')

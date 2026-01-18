@@ -230,6 +230,7 @@ class UniversalInventoryDB:
                 i.SERIAL_NO,
                 i.HW_SERIAL_NO,
                 i.INV_NO,
+                i.PART_NO,
                 i.CI_TYPE,
                 t.TYPE_NAME,
                 i.MODEL_NO,
@@ -256,6 +257,7 @@ class UniversalInventoryDB:
                 i.SERIAL_NO,
                 i.HW_SERIAL_NO,
                 i.INV_NO,
+                i.PART_NO,
                 i.CI_TYPE,
                 t.TYPE_NAME,
                 i.MODEL_NO,
@@ -328,6 +330,7 @@ class UniversalInventoryDB:
                     i.SERIAL_NO,
                     i.HW_SERIAL_NO,
                     i.INV_NO,
+                    i.PART_NO,
                     MIN(i.DESCR) as equipment_description,
                     MIN(COALESCE(t.TYPE_NAME, 'Не указан')) as equipment_type,
                     MIN(COALESCE(m.MODEL_NAME, 'Не указана')) as model,
@@ -353,7 +356,7 @@ class UniversalInventoryDB:
                     v.VENDOR_NAME LIKE ? OR
                     o.OWNER_DISPLAY_NAME LIKE ?
                 )
-                GROUP BY i.SERIAL_NO, i.HW_SERIAL_NO, i.INV_NO
+                GROUP BY i.SERIAL_NO, i.HW_SERIAL_NO, i.INV_NO, i.PART_NO
             ) AS unique_items
             ORDER BY 
                 CASE 
@@ -373,6 +376,7 @@ class UniversalInventoryDB:
                     i.SERIAL_NO,
                     i.HW_SERIAL_NO,
                     i.INV_NO,
+                    i.PART_NO,
                     MIN(i.DESCR) as equipment_description,
                     MIN(COALESCE(t.TYPE_NAME, 'Не указан')) as equipment_type,
                     MIN(COALESCE(m.MODEL_NAME, 'Не указана')) as model,
@@ -397,7 +401,7 @@ class UniversalInventoryDB:
                     v.VENDOR_NAME LIKE ? OR
                     o.OWNER_DISPLAY_NAME LIKE ?
                 )
-                GROUP BY i.SERIAL_NO, i.HW_SERIAL_NO, i.INV_NO
+                GROUP BY i.SERIAL_NO, i.HW_SERIAL_NO, i.INV_NO, i.PART_NO
             ) AS unique_items
             ORDER BY 
                 CASE 
@@ -418,6 +422,7 @@ class UniversalInventoryDB:
                     i.SERIAL_NO,
                     i.HW_SERIAL_NO,
                     i.INV_NO,
+                    i.PART_NO,
                     MIN(i.DESCR) as equipment_description,
                     MIN(COALESCE(t.TYPE_NAME, 'Не указан')) as equipment_type,
                     MIN(COALESCE(m.MODEL_NAME, 'Не указана')) as model,
@@ -440,7 +445,7 @@ class UniversalInventoryDB:
                     v.VENDOR_NAME LIKE ? OR
                     o.OWNER_DISPLAY_NAME LIKE ?
                 )
-                GROUP BY i.SERIAL_NO, i.HW_SERIAL_NO, i.INV_NO
+                GROUP BY i.SERIAL_NO, i.HW_SERIAL_NO, i.INV_NO, i.PART_NO
             ) AS unique_items
             ORDER BY 
                 CASE 
@@ -539,6 +544,7 @@ class UniversalInventoryDB:
                 i.SERIAL_NO,
                 i.HW_SERIAL_NO,
                 i.INV_NO,
+                i.PART_NO,
                 i.DESCR as DESCRIPTION,
                 COALESCE(t.TYPE_NAME, 'Не указан') as TYPE_NAME,
                 COALESCE(m.MODEL_NAME, 'Не указана') as MODEL_NAME,
@@ -567,6 +573,7 @@ class UniversalInventoryDB:
                 i.SERIAL_NO,
                 i.HW_SERIAL_NO,
                 i.INV_NO,
+                i.PART_NO,
                 i.DESCR as DESCRIPTION,
                 COALESCE(t.TYPE_NAME, 'Не указан') as TYPE_NAME,
                 COALESCE(m.MODEL_NAME, 'Не указана') as MODEL_NAME,
@@ -840,6 +847,7 @@ class UniversalInventoryDB:
                         t.TYPE_NAME,
                         i.SERIAL_NO,
                         i.INV_NO,
+                    i.PART_NO,
                         m.MODEL_NAME,
                         v.VENDOR_NAME,
                         o.OWNER_DISPLAY_NAME,
@@ -866,6 +874,7 @@ class UniversalInventoryDB:
                         t.TYPE_NAME,
                         i.SERIAL_NO,
                         i.INV_NO,
+                    i.PART_NO,
                         m.MODEL_NAME,
                         v.VENDOR_NAME,
                         o.OWNER_DISPLAY_NAME,
@@ -893,6 +902,7 @@ class UniversalInventoryDB:
                         t.TYPE_NAME,
                         i.SERIAL_NO,
                         i.INV_NO,
+                    i.PART_NO,
                         m.MODEL_NAME,
                         v.VENDOR_NAME,
                         o.OWNER_DISPLAY_NAME,
@@ -919,6 +929,7 @@ class UniversalInventoryDB:
                         t.TYPE_NAME,
                         i.SERIAL_NO,
                         i.INV_NO,
+                    i.PART_NO,
                         m.MODEL_NAME,
                         v.VENDOR_NAME,
                         o.OWNER_DISPLAY_NAME,
@@ -1110,6 +1121,7 @@ class UniversalInventoryDB:
                     i.SERIAL_NO,
                     i.HW_SERIAL_NO,
                     i.INV_NO,
+                    i.PART_NO,
                     i.CI_TYPE,
                     t.TYPE_NAME,
                     i.MODEL_NO,
@@ -1137,6 +1149,7 @@ class UniversalInventoryDB:
                     i.SERIAL_NO,
                     i.HW_SERIAL_NO,
                     i.INV_NO,
+                    i.PART_NO,
                     i.CI_TYPE,
                     t.TYPE_NAME,
                     i.MODEL_NO,

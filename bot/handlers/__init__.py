@@ -29,6 +29,10 @@ from .transfer import (
     start_transfer,
     receive_transfer_photos,
     receive_new_employee,
+    receive_transfer_branch,
+    receive_transfer_location,
+    handle_transfer_branch_callback,
+    handle_transfer_location_callback,
     handle_transfer_confirmation
 )
 from .database import (
@@ -76,6 +80,10 @@ __all__ = [
     'start_transfer',
     'receive_transfer_photos',
     'receive_new_employee',
+    'receive_transfer_branch',
+    'receive_transfer_location',
+    'handle_transfer_branch_callback',
+    'handle_transfer_location_callback',
     'handle_transfer_confirmation',
     # Database handlers
     'show_database_menu',

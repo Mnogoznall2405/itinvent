@@ -109,6 +109,10 @@ def register_handlers(application: Application) -> None:
         start_transfer,
         receive_transfer_photos,
         receive_new_employee,
+        receive_transfer_branch,
+        receive_transfer_location,
+        handle_transfer_branch_callback,
+        handle_transfer_location_callback,
         handle_transfer_confirmation,
         handle_employee_suggestion_callback
     )
@@ -316,6 +320,14 @@ def register_handlers(application: Application) -> None:
             States.TRANSFER_NEW_EMPLOYEE: [
                 CallbackQueryHandler(handle_employee_suggestion_callback, pattern="^transfer_emp:"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, receive_new_employee)
+            ],
+            States.TRANSFER_NEW_BRANCH: [
+                CallbackQueryHandler(handle_transfer_branch_callback, pattern="^transfer_branch:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, receive_transfer_branch)
+            ],
+            States.TRANSFER_NEW_LOCATION: [
+                CallbackQueryHandler(handle_transfer_location_callback, pattern="^transfer_location:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, receive_transfer_location)
             ],
             States.TRANSFER_CONFIRMATION: [
                 CallbackQueryHandler(handle_transfer_confirmation, pattern="^(confirm|cancel)_transfer$")

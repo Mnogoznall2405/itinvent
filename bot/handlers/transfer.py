@@ -310,13 +310,96 @@ async def receive_new_employee(update: Update, context: ContextTypes.DEFAULT_TYP
     
     # Сохраняем нового сотрудника
     context.user_data['new_employee'] = new_employee
-    
+
     # Получаем отдел нового сотрудника из БД
     await get_employee_department(update, context, new_employee)
-    
+
+    # Запрашиваем филиал
+    await update.message.reply_text(
+        "🏢 <b>Укажите филиал</b>\n\n"
+        "Введите название филиала, куда перемещено оборудование:",
+        parse_mode='HTML'
+    )
+
+    return States.TRANSFER_NEW_BRANCH
+
+
+@handle_errors
+async def receive_transfer_branch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обработчик ввода филиала
+
+    Параметры:
+        update: Объект обновления от Telegram API
+        context: Контекст выполнения
+
+    Возвращает:
+        int: Следующее состояние
+    """
+    if not update.message or not update.message.text:
+        await update.message.reply_text("Пожалуйста, введите название филиала.")
+        return States.TRANSFER_NEW_BRANCH
+
+    from bot.handlers.suggestions_handler import show_transfer_branch_suggestions
+
+    branch = update.message.text.strip()
+
+    # Показываем подсказки если есть совпадения
+    if await show_transfer_branch_suggestions(
+        update, context, branch,
+        pending_key='pending_transfer_branch_input',
+        suggestions_key='transfer_branch_suggestions'
+    ):
+        return States.TRANSFER_NEW_BRANCH
+
+    # Сохраняем филиал
+    context.user_data['new_branch'] = branch
+
+    # Запрашиваем локацию/кабинет
+    await update.message.reply_text(
+        "📍 <b>Укажите локацию/кабинет</b>\n\n"
+        "Введите кабинет или расположение, где установлено оборудование:\n"
+        "Например: кабинет 101, 2 этаж, серверная и т.д.",
+        parse_mode='HTML'
+    )
+
+    return States.TRANSFER_NEW_LOCATION
+
+
+@handle_errors
+async def receive_transfer_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обработчик ввода локации/кабинета
+
+    Параметры:
+        update: Объект обновления от Telegram API
+        context: Контекст выполнения
+
+    Возвращает:
+        int: Следующее состояние
+    """
+    if not update.message or not update.message.text:
+        await update.message.reply_text("Пожалуйста, введите локацию/кабинет.")
+        return States.TRANSFER_NEW_LOCATION
+
+    from bot.handlers.suggestions_handler import show_transfer_location_suggestions
+
+    location = update.message.text.strip()
+
+    # Показываем подсказки если есть совпадения
+    if await show_transfer_location_suggestions(
+        update, context, location,
+        pending_key='pending_transfer_location_input',
+        suggestions_key='transfer_location_suggestions'
+    ):
+        return States.TRANSFER_NEW_LOCATION
+
+    # Сохраняем локацию
+    context.user_data['new_location'] = location
+
     # Показываем подтверждение
     await show_transfer_confirmation(update, context)
-    
+
     return States.TRANSFER_CONFIRMATION
 
 
@@ -364,19 +447,25 @@ async def show_transfer_confirmation(update: Update, context: ContextTypes.DEFAU
     
     # Сохраняем сгруппированные данные в контексте
     context.user_data['grouped_equipment'] = grouped_equipment
-    
+
     # Подсчитываем общее количество единиц и групп
     total_count = len(serials_data)
     groups_count = len(grouped_equipment)
-    
+
+    # Получаем филиал и локацию
+    new_branch = context.user_data.get('new_branch', 'Не указан')
+    new_location = context.user_data.get('new_location', 'Не указан')
+
     # Формируем сообщение с группами
     confirmation_text = (
         "📋 <b>Подтверждение перемещения оборудования</b>\n\n"
         f"👤 <b>Новый сотрудник:</b> {new_employee}\n"
+        f"🏢 <b>Филиал:</b> {new_branch}\n"
+        f"📍 <b>Локация:</b> {new_location}\n"
         f"📦 <b>Всего единиц:</b> {total_count}\n"
         f"👥 <b>Количество актов:</b> {groups_count}\n\n"
     )
-    
+
     # Добавляем информацию о каждой группе
     for act_num, (old_employee, equipment_list) in enumerate(grouped_equipment.items(), 1):
         confirmation_text += f"📄 <b>Акт {act_num}: От {old_employee}</b>\n"
@@ -444,6 +533,8 @@ async def handle_transfer_confirmation(update: Update, context: ContextTypes.DEF
             # Получаем данные
             new_employee = context.user_data.get('new_employee', '')
             new_employee_dept = context.user_data.get('new_employee_dept', '')
+            new_branch = context.user_data.get('new_branch', '')
+            new_location = context.user_data.get('new_location', '')
             user_id = update.effective_user.id
             db_name = database_manager.get_user_database(user_id)
             
@@ -496,9 +587,11 @@ async def handle_transfer_confirmation(update: Update, context: ContextTypes.DEF
                             # Сохраняем информацию о перемещениях для этой группы
                             equipment_list = grouped_equipment.get(old_employee, [])
                             for item in equipment_list:
-                                # Добавляем db_name в additional_data
+                                # Добавляем db_name, branch и location в additional_data
                                 additional_data = item.get('equipment', {}).copy()
                                 additional_data['db_name'] = db_name
+                                additional_data['branch'] = new_branch
+                                additional_data['location'] = new_location
 
                                 equipment_manager.add_equipment_transfer(
                                     serial_number=item.get('serial', ''),
@@ -720,29 +813,35 @@ async def handle_employee_suggestion_callback(update: Update, context: ContextTy
             if 0 <= idx < len(suggestions):
                 selected_name = suggestions[idx]
                 context.user_data['new_employee'] = selected_name
-                
+
                 # Получаем отдел выбранного сотрудника
                 await get_employee_department(update, context, selected_name)
-                
+
                 await query.answer()
                 await query.edit_message_text(f"✅ Выбран сотрудник: {selected_name}")
-                await show_transfer_confirmation_after_callback(query, context)
-                
-                return States.TRANSFER_CONFIRMATION
+
+                # Запрашиваем филиал
+                await query.message.reply_text(
+                    "🏢 <b>Укажите филиал</b>\n\n"
+                    "Введите название филиала, куда перемещено оборудование:",
+                    parse_mode='HTML'
+                )
+
+                return States.TRANSFER_NEW_BRANCH
         except (ValueError, IndexError) as e:
             logger.error(f"Ошибка обработки выбора сотрудника: {e}")
     
     # Обработка "Ввести как есть"
     elif data == 'transfer_emp:manual':
         pending = context.user_data.get('pending_transfer_employee_input', '').strip()
-        
+
         if not pending:
             await query.answer()
             await query.edit_message_text(
                 "❌ Не найден введённый текст. Пожалуйста, введите ФИО заново."
             )
             return States.TRANSFER_NEW_EMPLOYEE
-        
+
         if not validate_employee_name(pending):
             await query.answer()
             await query.edit_message_text(
@@ -750,17 +849,23 @@ async def handle_employee_suggestion_callback(update: Update, context: ContextTy
                 "Пожалуйста, введите корректное ФИО."
             )
             return States.TRANSFER_NEW_EMPLOYEE
-        
+
         context.user_data['new_employee'] = pending
-        
+
         # Получаем отдел введенного сотрудника
         await get_employee_department(update, context, pending)
-        
+
         await query.answer()
         await query.edit_message_text(f"✅ Принято: {pending}")
-        await show_transfer_confirmation_after_callback(query, context)
-        
-        return States.TRANSFER_CONFIRMATION
+
+        # Запрашиваем филиал
+        await query.message.reply_text(
+            "🏢 <b>Укажите филиал</b>\n\n"
+            "Введите название филиала, куда перемещено оборудование:",
+            parse_mode='HTML'
+        )
+
+        return States.TRANSFER_NEW_BRANCH
     
     # Обработка "Обновить список" - используем универсальный обработчик
     return await handle_employee_suggestion_generic(
@@ -770,8 +875,8 @@ async def handle_employee_suggestion_callback(update: Update, context: ContextTy
         storage_key='new_employee',
         pending_key='pending_transfer_employee_input',
         suggestions_key='transfer_employee_suggestions',
-        next_state=States.TRANSFER_NEW_EMPLOYEE,
-        next_message=None
+        next_state=States.TRANSFER_NEW_BRANCH,
+        next_message="🏢 <b>Укажите филиал</b>\n\nВведите название филиала, куда перемещено оборудование:"
     )
 
 
@@ -856,19 +961,25 @@ async def show_transfer_confirmation_after_callback(query, context: ContextTypes
     
     # Сохраняем сгруппированные данные в контексте
     context.user_data['grouped_equipment'] = grouped_equipment
-    
+
     # Подсчитываем общее количество единиц и групп
     total_count = len(serials_data)
     groups_count = len(grouped_equipment)
-    
+
+    # Получаем филиал и локацию
+    new_branch = context.user_data.get('new_branch', 'Не указан')
+    new_location = context.user_data.get('new_location', 'Не указан')
+
     # Формируем сообщение с группами
     confirmation_text = (
         "📋 <b>Подтверждение перемещения оборудования</b>\n\n"
         f"👤 <b>Новый сотрудник:</b> {new_employee}\n"
+        f"🏢 <b>Филиал:</b> {new_branch}\n"
+        f"📍 <b>Локация:</b> {new_location}\n"
         f"📦 <b>Всего единиц:</b> {total_count}\n"
         f"👥 <b>Количество актов:</b> {groups_count}\n\n"
     )
-    
+
     # Добавляем информацию о каждой группе
     for act_num, (old_employee, equipment_list) in enumerate(grouped_equipment.items(), 1):
         confirmation_text += f"📄 <b>Акт {act_num}: От {old_employee}</b>\n"
@@ -896,3 +1007,125 @@ async def show_transfer_confirmation_after_callback(query, context: ContextTypes
         reply_markup=reply_markup,
         parse_mode='HTML'
     )
+
+
+@handle_errors
+async def handle_transfer_branch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обработчик выбора филиала из подсказок
+
+    Параметры:
+        update: Объект обновления от Telegram API
+        context: Контекст выполнения
+
+    Возвращает:
+        int: Следующее состояние
+    """
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+    suggestions = context.user_data.get('transfer_branch_suggestions', [])
+
+    # Обработка выбора конкретного филиала
+    if data.startswith('transfer_branch:') and not data.endswith(':manual'):
+        try:
+            idx = int(data.split(':', 1)[1])
+            if 0 <= idx < len(suggestions):
+                selected_branch = suggestions[idx]
+                context.user_data['new_branch'] = selected_branch
+
+                await query.edit_message_text(f"✅ Выбран филиал: {selected_branch}")
+
+                # Запрашиваем локацию
+                await query.message.reply_text(
+                    "📍 <b>Укажите локацию/кабинет</b>\n\n"
+                    "Введите кабинет или расположение, где установлено оборудование:\n"
+                    "Например: кабинет 101, 2 этаж, серверная и т.д.",
+                    parse_mode='HTML'
+                )
+
+                return States.TRANSFER_NEW_LOCATION
+        except (ValueError, IndexError) as e:
+            logger.error(f"Ошибка обработки выбора филиала: {e}")
+
+    # Обработка "Ввести как есть"
+    elif data == 'transfer_branch:manual':
+        pending = context.user_data.get('pending_transfer_branch_input', '').strip()
+
+        if not pending:
+            await query.edit_message_text(
+                "❌ Не найден введённый текст. Пожалуйста, введите филиал заново."
+            )
+            return States.TRANSFER_NEW_BRANCH
+
+        context.user_data['new_branch'] = pending
+        await query.edit_message_text(f"✅ Принято: {pending}")
+
+        # Запрашиваем локацию
+        await query.message.reply_text(
+            "📍 <b>Укажите локацию/кабинет</b>\n\n"
+            "Введите кабинет или расположение, где установлено оборудование:\n"
+            "Например: кабинет 101, 2 этаж, серверная и т.д.",
+            parse_mode='HTML'
+        )
+
+        return States.TRANSFER_NEW_LOCATION
+
+    return States.TRANSFER_NEW_BRANCH
+
+
+@handle_errors
+async def handle_transfer_location_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обработчик выбора локации из подсказок
+
+    Параметры:
+        update: Объект обновления от Telegram API
+        context: Контекст выполнения
+
+    Возвращает:
+        int: Следующее состояние
+    """
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+    suggestions = context.user_data.get('transfer_location_suggestions', [])
+
+    # Обработка выбора конкретной локации
+    if data.startswith('transfer_location:') and not data.endswith(':manual'):
+        try:
+            idx = int(data.split(':', 1)[1])
+            if 0 <= idx < len(suggestions):
+                selected_location = suggestions[idx]
+                context.user_data['new_location'] = selected_location
+
+                await query.edit_message_text(f"✅ Выбрана локация: {selected_location}")
+
+                # Показываем подтверждение
+                await show_transfer_confirmation(update, context)
+
+                return States.TRANSFER_CONFIRMATION
+        except (ValueError, IndexError) as e:
+            logger.error(f"Ошибка обработки выбора локации: {e}")
+
+    # Обработка "Ввести как есть"
+    elif data == 'transfer_location:manual':
+        pending = context.user_data.get('pending_transfer_location_input', '').strip()
+
+        if not pending:
+            await query.edit_message_text(
+                "❌ Не найден введённый текст. Пожалуйста, введите локацию заново."
+            )
+            return States.TRANSFER_NEW_LOCATION
+
+        context.user_data['new_location'] = pending
+        await query.edit_message_text(f"✅ Принято: {pending}")
+
+        # Показываем подтверждение
+        await show_transfer_confirmation(update, context)
+
+        return States.TRANSFER_CONFIRMATION
+
+    return States.TRANSFER_NEW_LOCATION

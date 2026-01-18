@@ -570,6 +570,17 @@ class EquipmentDataManager:
                 f.write(f"Серийный номер: {serial_number}\n")
                 f.write(f"Новый сотрудник: {new_employee}\n")
                 f.write(f"Предыдущий сотрудник: {old_employee}\n")
+
+                # Добавляем филиал и локацию, если они есть
+                additional_data = record.get('additional_data', {})
+                branch = additional_data.get('branch', '') if isinstance(additional_data, dict) else ''
+                location = additional_data.get('location', '') if isinstance(additional_data, dict) else ''
+
+                if branch:
+                    f.write(f"Филиал: {branch}\n")
+                if location:
+                    f.write(f"Локация: {location}\n")
+
                 f.write(f"Дата: {formatted_date}\n")
                 f.write("-" * 40 + "\n")
         
