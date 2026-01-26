@@ -792,7 +792,7 @@ async def handle_export_database_callback(update: Update, context: ContextTypes.
         )
 
         # Экспортируем базу
-        excel_path = await export_database_to_csv(db_name)
+        excel_path = await export_database_to_excel(db_name)
 
         if excel_path:
             # Отправляем файл
@@ -827,7 +827,7 @@ async def handle_export_database_callback(update: Update, context: ContextTypes.
     return States.DB_SELECTION_MENU
 
 
-async def export_database_to_csv(db_name: str) -> str:
+async def export_database_to_excel(db_name: str) -> str:
     """
     Экспортирует все данные из базы данных в Excel файл с группировкой
 
