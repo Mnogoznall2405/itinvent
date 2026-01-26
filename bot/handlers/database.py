@@ -52,7 +52,7 @@ async def show_database_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Дополнительные опции
     keyboard.extend([
         [InlineKeyboardButton("🔧 Просмотр по типу оборудования", callback_data="equipment_types_menu")],
-        [InlineKeyboardButton("📤 Экспорт базы в CSV", callback_data="export_db_menu")],
+        [InlineKeyboardButton("📤 Экспорт базы данных", callback_data="export_db_menu")],
         [InlineKeyboardButton("🔙 Назад в главное меню", callback_data="back_to_main")]
     ])
     
@@ -708,7 +708,7 @@ async def show_database_menu_from_callback(update: Update, context: ContextTypes
     
     keyboard.extend([
         [InlineKeyboardButton("🔧 Просмотр по типу оборудования", callback_data="equipment_types_menu")],
-        [InlineKeyboardButton("📤 Экспорт базы в CSV", callback_data="export_db_menu")],
+        [InlineKeyboardButton("📤 Экспорт базы данных", callback_data="export_db_menu")],
         [InlineKeyboardButton("🔙 Назад в главное меню", callback_data="back_to_main")]
     ])
     
@@ -755,7 +755,7 @@ async def show_export_database_menu(update: Update, context: ContextTypes.DEFAUL
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.callback_query.edit_message_text(
-        "📤 <b>Экспорт базы данных в CSV</b>\n\n"
+        "📤 <b>Экспорт базы данных</b>\n\n"
         "Выберите базу данных для экспорта:",
         parse_mode='HTML',
         reply_markup=reply_markup
