@@ -14,6 +14,7 @@ from bot.utils.keyboards import create_main_menu_keyboard
 from bot.utils.pagination import paginate_results
 from bot.utils.formatters import format_equipment_info
 from database_manager import database_manager
+from universal_database import UniversalInventoryDB
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ async def show_database_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Дополнительные опции
     keyboard.extend([
         [InlineKeyboardButton("🔧 Просмотр по типу оборудования", callback_data="equipment_types_menu")],
-        [InlineKeyboardButton("📈 Статистика баз данных", callback_data="view_statistics")],
+        [InlineKeyboardButton("📤 Экспорт базы в CSV", callback_data="export_db_menu")],
         [InlineKeyboardButton("🔙 Назад в главное меню", callback_data="back_to_main")]
     ])
     
@@ -118,10 +119,14 @@ async def handle_database_callback(update: Update, context: ContextTypes.DEFAULT
         # Просмотр по типу оборудования
         return await show_equipment_types_menu(update, context)
     
-    elif callback_data == "view_statistics":
-        # Просмотр статистики
-        return await show_database_statistics(update, context)
-    
+    elif callback_data == "export_db_menu":
+        # Экспорт базы данных
+        return await show_export_database_menu(update, context)
+
+    elif callback_data.startswith("export_db:"):
+        # Обработка выбора базы для экспорта
+        return await handle_export_database_callback(update, context)
+
     elif callback_data == "back_to_main":
         # Возврат в главное меню
         await query.edit_message_text("✅ Возврат в главное меню")
@@ -703,7 +708,7 @@ async def show_database_menu_from_callback(update: Update, context: ContextTypes
     
     keyboard.extend([
         [InlineKeyboardButton("🔧 Просмотр по типу оборудования", callback_data="equipment_types_menu")],
-        [InlineKeyboardButton("📈 Статистика баз данных", callback_data="view_statistics")],
+        [InlineKeyboardButton("📤 Экспорт базы в CSV", callback_data="export_db_menu")],
         [InlineKeyboardButton("🔙 Назад в главное меню", callback_data="back_to_main")]
     ])
     
@@ -716,5 +721,398 @@ async def show_database_menu_from_callback(update: Update, context: ContextTypes
         parse_mode='HTML',
         reply_markup=reply_markup
     )
-    
+
     return States.DB_SELECTION_MENU
+
+
+@handle_errors
+async def show_export_database_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Отображает меню выбора базы данных для экспорта в CSV
+
+    Параметры:
+        update: Объект обновления от Telegram API
+        context: Контекст выполнения
+
+    Возвращает:
+        int: Состояние DB_SELECTION_MENU
+    """
+    # Получаем список доступных баз данных
+    available_databases = database_manager.get_available_databases()
+
+    # Создаем клавиатуру с кнопками для каждой базы
+    keyboard = []
+
+    for db_name in available_databases:
+        keyboard.append([InlineKeyboardButton(
+            f"📊 {db_name}",
+            callback_data=f"export_db:{db_name}"
+        )])
+
+    # Кнопка назад
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_db_menu")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.callback_query.edit_message_text(
+        "📤 <b>Экспорт базы данных в CSV</b>\n\n"
+        "Выберите базу данных для экспорта:",
+        parse_mode='HTML',
+        reply_markup=reply_markup
+    )
+
+    return States.DB_SELECTION_MENU
+
+
+@handle_errors
+async def handle_export_database_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обрабатывает выбор базы данных для экспорта
+
+    Параметры:
+        update: Объект обновления от Telegram API
+        context: Контекст выполнения
+
+    Возвращает:
+        int: Состояние DB_SELECTION_MENU
+    """
+    query = update.callback_query
+    await query.answer()
+
+    callback_data = query.data
+
+    if callback_data.startswith("export_db:"):
+        # Экспорт выбранной базы
+        db_name = callback_data.split(":")[1]
+
+        await query.edit_message_text(
+            f"⏳ Экспортирую базу <b>{db_name}</b> в Excel...\n\n"
+            f"Это может занять некоторое время.",
+            parse_mode='HTML'
+        )
+
+        # Экспортируем базу
+        excel_path = await export_database_to_csv(db_name)
+
+        if excel_path:
+            # Отправляем файл
+            try:
+                import os
+                record_count = count_records_in_excel(excel_path)
+                filename = os.path.basename(excel_path)
+
+                with open(excel_path, 'rb') as excel_file:
+                    await context.bot.send_document(
+                        chat_id=query.message.chat_id,
+                        document=excel_file,
+                        filename=filename,
+                        caption=f"✅ Экспорт базы <b>{db_name}</b>\n\nВсего записей: {record_count}",
+                        parse_mode='HTML'
+                    )
+            except Exception as e:
+                logger.error(f"Ошибка отправки Excel файла: {e}")
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=f"❌ Ошибка при отправке файла: {e}"
+                )
+        else:
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text="❌ Ошибка при экспорте базы данных"
+            )
+
+        # Возвращаемся в меню БД
+        return await show_database_menu_from_callback(update, context)
+
+    return States.DB_SELECTION_MENU
+
+
+async def export_database_to_csv(db_name: str) -> str:
+    """
+    Экспортирует все данные из базы данных в Excel файл с группировкой
+
+    Параметры:
+        db_name: Имя базы данных для экспорта
+
+    Возвращает:
+        str: Путь к созданному Excel файлу или None в случае ошибки
+    """
+    import os
+    from datetime import datetime
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+    try:
+        # Получаем конфиг базы данных
+        config = database_manager.get_database_config(db_name)
+        if not config:
+            logger.error(f"Конфиг базы данных {db_name} не найден")
+            return None
+
+        # Создаем подключение к базе
+        db = UniversalInventoryDB(config)
+        conn = db._get_connection()
+        cursor = conn.cursor()
+
+        # SQL запрос для получения всех данных (с LOCATIONS и BRANCHES)
+        query_with_location = """
+        SELECT
+            i.INV_NO,
+            o.OWNER_DISPLAY_NAME as EMPLOYEE_NAME,
+            t.TYPE_NAME,
+            i.SERIAL_NO,
+            i.HW_SERIAL_NO,
+            i.PART_NO,
+            m.MODEL_NAME,
+            v.VENDOR_NAME as MANUFACTURER,
+            l.DESCR as LOCATION,
+            i.EMPL_NO,
+            o.OWNER_DEPT as EMPLOYEE_DEPT,
+            b.BRANCH_NAME as BRANCH,
+            s.DESCR as STATUS,
+            i.DESCR as DESCRIPTION
+        FROM ITEMS i
+        LEFT JOIN CI_TYPES t ON i.CI_TYPE = t.CI_TYPE AND i.TYPE_NO = t.TYPE_NO
+        LEFT JOIN CI_MODELS m ON i.MODEL_NO = m.MODEL_NO AND i.CI_TYPE = m.CI_TYPE
+        LEFT JOIN VENDORS v ON m.VENDOR_NO = v.VENDOR_NO
+        LEFT JOIN LOCATIONS l ON i.LOC_NO = l.LOC_NO
+        LEFT JOIN OWNERS o ON i.EMPL_NO = o.OWNER_NO
+        LEFT JOIN BRANCHES b ON i.BRANCH_NO = b.BRANCH_NO
+        LEFT JOIN STATUS s ON i.STATUS_NO = s.STATUS_NO
+        ORDER BY b.BRANCH_NAME, l.DESCR, i.SERIAL_NO
+        """
+
+        # Fallback запрос без BRANCHES и LOCATIONS
+        query_without_location = """
+        SELECT
+            i.INV_NO,
+            o.OWNER_DISPLAY_NAME as EMPLOYEE_NAME,
+            t.TYPE_NAME,
+            i.SERIAL_NO,
+            i.HW_SERIAL_NO,
+            i.PART_NO,
+            m.MODEL_NAME,
+            v.VENDOR_NAME as MANUFACTURER,
+            'Не указано' as LOCATION,
+            i.EMPL_NO,
+            o.OWNER_DEPT as EMPLOYEE_DEPT,
+            'Не указан' as BRANCH,
+            s.DESCR as STATUS,
+            i.DESCR as DESCRIPTION
+        FROM ITEMS i
+        LEFT JOIN CI_TYPES t ON i.CI_TYPE = t.CI_TYPE AND i.TYPE_NO = t.TYPE_NO
+        LEFT JOIN CI_MODELS m ON i.MODEL_NO = m.MODEL_NO AND i.CI_TYPE = m.CI_TYPE
+        LEFT JOIN VENDORS v ON m.VENDOR_NO = v.VENDOR_NO
+        LEFT JOIN OWNERS o ON i.EMPL_NO = o.OWNER_NO
+        LEFT JOIN STATUS s ON i.STATUS_NO = s.STATUS_NO
+        ORDER BY i.SERIAL_NO
+        """
+
+        # Пробуем выполнить запрос с fallback
+        try:
+            cursor.execute(query_with_location)
+            rows = cursor.fetchall()
+        except Exception as e:
+            error_msg = str(e).lower()
+            if 'branches' in error_msg or 'locations' in error_msg or 'permission' in error_msg or 'запрещено' in error_msg:
+                logger.warning(f"Нет доступа к BRANCHES/LOCATIONS, используем fallback: {e}")
+                cursor.execute(query_without_location)
+                rows = cursor.fetchall()
+            else:
+                raise e
+
+        cursor.close()
+
+        if not rows:
+            logger.warning(f"Нет данных для экспорта в базе {db_name}")
+            return None
+
+        # Создаем директорию для экспорта
+        export_dir = "exports"
+        os.makedirs(export_dir, exist_ok=True)
+
+        # Формируем имя файла с датой
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        excel_file = os.path.join(export_dir, f"{db_name}_export_{timestamp}.xlsx")
+
+        # Создаем Excel книгу
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Экспорт оборудования"
+
+        # Стили
+        header_font = Font(bold=True, size=11)
+        header_fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9")
+        header_alignment = Alignment(horizontal="center", vertical="center")
+        group_alignment = Alignment(horizontal="left", vertical="center")
+        branch_font = Font(bold=True, size=13, color="FFFFFF")
+        branch_fill = PatternFill(start_color="4472C4", end_color="4472C4")
+        location_font = Font(bold=True, size=11)
+        location_fill = PatternFill(start_color="E7E6E6", end_color="E7E6E6")
+        border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+
+        # Добавляем заголовок с технической информацией (первые 3 строки)
+        ws['A1'] = f"База данных: {db_name}"
+        ws['A2'] = f"Дата экспорта: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}"
+        ws['A3'] = f"Всего записей: {len(rows)}"
+        ws['A1'].font = Font(bold=True, size=12)
+        ws.merge_cells(f'A1:N1')
+        ws.merge_cells(f'A2:N2')
+        ws.merge_cells(f'A3:N3')
+
+        # Заголовки колонок (строка 5)
+        headers = [
+            'Инв. №',
+            'Сотрудник',
+            'Тип',
+            'Серийный №',
+            'Апп. серийный №',
+            'Партийный №',
+            'Модель',
+            'Производитель',
+            'Местоположение',
+            'Таб. №',
+            'Отдел',
+            'Филиал',
+            'Статус',
+            'Описание'
+        ]
+
+        header_row = 5
+        for col_idx, header in enumerate(headers, start=1):
+            cell = ws.cell(row=header_row, column=col_idx, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_alignment
+            cell.border = border
+
+        # Группируем данные по филиалу и местоположению
+        current_row = header_row + 1
+        current_branch = object()  # Уникальный объект для первого сравнения
+        current_location = None
+
+        for row in rows:
+            # Распаковываем строку по индексам (как в SQL запросе)
+            inv_no = row[0]
+            employee_name = row[1]
+            equipment_type = row[2]
+            serial_no = row[3]
+            hw_serial_no = row[4]
+            part_no = row[5]
+            model = row[6]
+            manufacturer = row[7]
+            location = row[8] or 'Не указано'
+            empl_no = row[9]
+            dept = row[10]
+            branch = row[11] or 'Не указан'
+            status = row[12]
+            description = row[13]
+
+            # Логирование для отладки
+            logger.debug(f"Row: branch='{branch}', location='{location}', current_branch='{current_branch}'")
+
+            # Новый филиал - добавляем заголовок группы
+            if branch != current_branch:
+                if current_branch is not object():  # Если это НЕ первый филиал
+                    current_row += 1  # Пустая строка между филиалами
+
+                current_branch = branch
+                current_location = None
+
+                logger.info(f"Creating branch header at row {current_row}: '{branch}'")
+
+                # Заголовок филиала (на всю ширину)
+                ws.merge_cells(f'A{current_row}:N{current_row}')
+                cell = ws.cell(row=current_row, column=1, value=f"🏢 {branch}")
+                cell.font = branch_font
+                cell.fill = branch_fill
+                cell.alignment = group_alignment
+                current_row += 1
+
+            # Новое местоположение внутри филиала
+            if location != current_location:
+                current_location = location
+
+                # Заголовок местоположения
+                ws.merge_cells(f'A{current_row}:N{current_row}')
+                cell = ws.cell(row=current_row, column=1, value=f"📍 {location}")
+                cell.font = location_font
+                cell.fill = location_fill
+                cell.alignment = group_alignment
+                current_row += 1
+
+            # Данные оборудования - ВСЕ 14 полей в правильном порядке
+            data = [
+                inv_no or '',                      # 1. Инв. №
+                employee_name or 'Не назначен',    # 2. Сотрудник
+                equipment_type or '',              # 3. Тип
+                serial_no or '',                   # 4. Серийный №
+                hw_serial_no or '',                # 5. Апп. серийный №
+                part_no or '',                     # 6. Партийный №
+                model or '',                       # 7. Модель
+                manufacturer or '',                 # 8. Производитель
+                location,                          # 9. Местоположение
+                empl_no or '',                     # 10. Таб. №
+                dept or '',                        # 11. Отдел
+                branch,                            # 12. Филиал
+                status or '',                      # 13. Статус
+                description or ''                  # 14. Описание
+            ]
+
+            for col_idx, value in enumerate(data, start=1):
+                cell = ws.cell(row=current_row, column=col_idx, value=value)
+                cell.border = border
+                cell.alignment = Alignment(vertical="top", wrap_text=False)
+
+                # Форматирование для важных полей
+                if col_idx == 4:  # Серийный номер - жирный
+                    cell.font = Font(bold=True)
+                elif col_idx == 2 and employee_name and employee_name != 'Не назначен':  # Сотрудник - жёлтый фон
+                    cell.fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC")
+
+            current_row += 1
+
+        # Автоматическая ширина колонок
+        column_widths = [12, 20, 15, 18, 18, 12, 20, 15, 25, 10, 18, 15, 12, 35]
+        for col_idx, width in enumerate(column_widths, start=1):
+            ws.column_dimensions[chr(64 + col_idx)].width = width
+
+        # Сохраняем файл
+        wb.save(excel_file)
+
+        logger.info(f"Экспорт базы {db_name} завершен: {excel_file} ({len(rows)} записей)")
+        return excel_file
+
+    except Exception as e:
+        logger.error(f"Ошибка при экспорте базы {db_name}: {e}", exc_info=True)
+        return None
+
+
+def count_records_in_excel(excel_path: str) -> int:
+    """
+    Подсчитывает количество записей в Excel файле
+
+    Параметры:
+        excel_path: Путь к Excel файлу
+
+    Возвращает:
+        int: Количество записей оборудования
+    """
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(excel_path, read_only=True)
+        ws = wb.active
+
+        # Количество записей = все строки минус заголовки (5 строк технической информации)
+        # Формула: общее количество строк - 5 (заголовки)
+        record_count = ws.max_row - 5
+        wb.close()
+
+        return max(0, record_count)
+    except Exception:
+        return 0
