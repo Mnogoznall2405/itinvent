@@ -945,8 +945,8 @@ async def export_database_to_csv(db_name: str) -> str:
         header_fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9")
         header_alignment = Alignment(horizontal="center", vertical="center")
         group_alignment = Alignment(horizontal="left", vertical="center")
-        branch_font = Font(bold=True, size=13, color="FFFFFF")
-        branch_fill = PatternFill(start_color="4472C4", end_color="4472C4")
+        branch_font = Font(bold=True, size=13, color="000000")  # Чёрный текст для лучшей видимости
+        branch_fill = PatternFill(start_color="B4C7E7", end_color="B4C7E7")  # Светло-синий фон
         location_font = Font(bold=True, size=11)
         location_fill = PatternFill(start_color="E7E6E6", end_color="E7E6E6")
         border = Border(
@@ -993,7 +993,8 @@ async def export_database_to_csv(db_name: str) -> str:
 
         # Группируем данные по филиалу и местоположению
         current_row = header_row + 1
-        current_branch = object()  # Уникальный объект для первого сравнения
+        _FIRST_BRANCH_SENTINEL = object()  # Уникальный объект-маркер
+        current_branch = _FIRST_BRANCH_SENTINEL
         current_location = None
 
         for row in rows:
@@ -1014,11 +1015,11 @@ async def export_database_to_csv(db_name: str) -> str:
             description = row[13]
 
             # Логирование для отладки
-            logger.debug(f"Row: branch='{branch}', location='{location}', current_branch='{current_branch}'")
+            logger.debug(f"Row: branch='{branch}', location='{location}'")
 
             # Новый филиал - добавляем заголовок группы
             if branch != current_branch:
-                if current_branch is not object():  # Если это НЕ первый филиал
+                if current_branch is not _FIRST_BRANCH_SENTINEL:  # Если это НЕ первый филиал
                     current_row += 1  # Пустая строка между филиалами
 
                 current_branch = branch
