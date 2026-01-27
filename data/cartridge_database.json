@@ -952,7 +952,7 @@
     "components": ["cartridge"]
   },
 
-  "xerox versalink c7120": {
+  "xerox versalink c7120 mfp": {
     "oem_cartridge": "Xerox 006R01824",
     "is_color": true,
     "compatible_models": [
@@ -1799,49 +1799,6 @@
     "waste_toner_models": ["CE258A"],
     "transfer_belt_models": ["CE259A"],
     "components": ["cartridge", "fuser", "photoconductor", "waste_toner", "transfer_belt"]
-  },
-
-  "xerox versalink c7020": {
-    "oem_cartridge": "Xerox 006R01637",
-    "is_color": true,
-    "compatible_models": [
-      {
-        "model": "Xerox 006R01637",
-        "description": "Тонер-картридж",
-        "color": "Черный",
-        "page_yield": 23600,
-        "oem_part": "006R01637",
-        "is_oem": true
-      },
-      {
-        "model": "Xerox 006R01638",
-        "description": "Тонер-картридж",
-        "color": "Синий",
-        "page_yield": 16500,
-        "oem_part": "006R01638",
-        "is_oem": false
-      },
-      {
-        "model": "Xerox 006R01639",
-        "description": "Тонер-картридж",
-        "color": "Пурпурный",
-        "page_yield": 16500,
-        "oem_part": "006R01639",
-        "is_oem": false
-      },
-      {
-        "model": "Xerox 106R3746",
-        "description": "Тонер-картридж",
-        "color": "Желтый",
-        "page_yield": 16500,
-        "oem_part": "106R3746",
-        "is_oem": false
-      }
-    ],
-    "fuser_models": ["115R00115"],
-    "photoconductor_models": ["113R00780"],
-    "waste_toner_models": ["115R00113"],
-    "components": ["cartridge", "fuser", "photoconductor", "waste_toner"]
   },
 
   "hp color laserjet m455": {
