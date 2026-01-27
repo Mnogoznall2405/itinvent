@@ -35,8 +35,105 @@ class PrinterComponentDetector:
             base_url=config.api.openrouter_base_url
         )
         self.cache_file = "data/printer_component_cache.json"
+        self.cartridge_db_file = "data/cartridge_database.json"
         self.cache = self._load_cache()
+        self.cartridge_db = self._load_cartridge_db()
         self._migrate_old_cache()
+
+    def _load_cartridge_db(self) -> Dict[str, Any]:
+        """Загружает базу данных картриджей"""
+        try:
+            if os.path.exists(self.cartridge_db_file):
+                with open(self.cartridge_db_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading cartridge database: {e}")
+
+        return {}
+
+    def _find_in_cartridge_db(self, printer_model: str) -> Optional[Dict[str, Any]]:
+        """
+        Ищет принтер в базе данных картриджей
+
+        Args:
+            printer_model: Модель принтера
+
+        Returns:
+            Dict с данными из cartridge_database.json или None
+        """
+        normalized_model = printer_model.lower().strip()
+
+        # Пробуем точное совпадение
+        if normalized_model in self.cartridge_db:
+            logger.info(f"Found exact match in cartridge DB for {printer_model}")
+            return self.cartridge_db[normalized_model]
+
+        # Пробуем найти частичное совпадение
+        for db_model, data in self.cartridge_db.items():
+            if normalized_model in db_model or db_model in normalized_model:
+                logger.info(f"Found partial match in cartridge DB: {printer_model} -> {db_model}")
+                return data
+
+        return None
+
+    def _convert_from_cartridge_db(self, cartridge_data: Dict[str, Any], printer_model: str) -> Dict[str, Any]:
+        """
+        Конвертирует данные из cartridge_database.json в формат детектора
+
+        Args:
+            cartridge_data: Данные из cartridge_database.json
+            printer_model: Модель принтера
+
+        Returns:
+            Dict в формате, который ожидает детектор
+        """
+        is_color = cartridge_data.get("is_color", False)
+        components_list = cartridge_data.get("components", ["cartridge"])
+
+        # Определяем какие компоненты доступны
+        components = {}
+        for comp in components_list:
+            if comp == "cartridge":
+                components["cartridge"] = True
+            elif comp in ["fuser", "fuser_models"]:
+                components["fuser"] = True
+            elif comp in ["photoconductor", "photoconductor_models", "drum"]:
+                components["photoconductor"] = True
+
+        # Формируем список доступных компонентов
+        component_list = [comp for comp, available in components.items() if available]
+
+        # Формируем данные о совместимых моделях для LLM-формата
+        llm_components = {}
+        if cartridge_data.get("compatible_models"):
+            cartridge_models = [m["model"] for m in cartridge_data["compatible_models"]]
+            llm_components["cartridge"] = {
+                "available": True,
+                "compatible_models": cartridge_models
+            }
+        if cartridge_data.get("fuser_models"):
+            llm_components["fuser"] = {
+                "available": True,
+                "compatible_models": cartridge_data["fuser_models"]
+            }
+        if cartridge_data.get("photoconductor_models"):
+            llm_components["photoconductor"] = {
+                "available": True,
+                "compatible_models": cartridge_data["photoconductor_models"]
+            }
+
+        result = {
+            "color": is_color,
+            "components": components,
+            "component_list": component_list,
+            "confidence": 1.0,  # Максимальная уверенность для базы данных
+            "determined_at": datetime.now().isoformat(),
+            "from_db": True,
+            "raw_llm_response": json.dumps({"components": llm_components})
+        }
+
+        logger.info(f"Converted from cartridge DB: {printer_model} -> color={is_color}, components={component_list}")
+        return result
 
     def _load_cache(self) -> Dict[str, Any]:
         """Загружает кэш из файла"""
@@ -138,9 +235,22 @@ class PrinterComponentDetector:
         Returns:
             List[str]: Список совместимых моделей
         """
+        # СНАЧАЛА проверяем базу данных картриджей
+        cartridge_data = self._find_in_cartridge_db(printer_model)
+        if cartridge_data:
+            if component_type == "cartridge" or component_type == "cartridges":
+                if cartridge_data.get("compatible_models"):
+                    return [m["model"] for m in cartridge_data["compatible_models"]]
+            elif component_type == "fuser" or component_type == "fuser_models":
+                if cartridge_data.get("fuser_models"):
+                    return cartridge_data["fuser_models"]
+            elif component_type in ["drum", "photoconductor", "photoconductor_models"]:
+                if cartridge_data.get("photoconductor_models"):
+                    return cartridge_data["photoconductor_models"]
+
         normalized_name = self._normalize_printer_name(printer_model)
 
-        # Проверяем кэш
+        # ПОТОМ проверяем кэш
         if normalized_name in self.cache:
             cached_data = self.cache[normalized_name]
             # Ищем совместимые модели в сырых данных LLM
@@ -154,7 +264,7 @@ class PrinterComponentDetector:
                 except (json.JSONDecodeError, KeyError):
                     pass
 
-        # Если в кэше нет информации, делаем новый запрос
+        # В КОНЦЕ если в кэше нет информации, делаем новый запрос
         try:
             components_data = self._detect_via_llm(printer_model)
             components = components_data.get("components", {})
@@ -202,7 +312,13 @@ class PrinterComponentDetector:
         """
         normalized_name = self._normalize_printer_name(printer_model)
 
-        # Проверяем кэш
+        # СНАЧАЛА проверяем базу данных картриджей
+        cartridge_data = self._find_in_cartridge_db(printer_model)
+        if cartridge_data:
+            logger.info(f"Using cartridge database for {printer_model}")
+            return self._convert_from_cartridge_db(cartridge_data, printer_model)
+
+        # ПОТОМ проверяем кэш
         if normalized_name in self.cache:
             cached_data = self.cache[normalized_name]
             logger.info(f"Found cached components for {printer_model}")
@@ -215,7 +331,7 @@ class PrinterComponentDetector:
                 "from_cache": True
             }
 
-        # Используем LLM для детекции
+        # В КОНЦЕ используем LLM для детекции
         logger.info(f"Detecting components for {printer_model} via LLM")
 
         try:
