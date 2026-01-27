@@ -119,7 +119,10 @@ def register_handlers(application: Application) -> None:
     from bot.handlers.database import (
         show_database_menu,
         handle_database_callback,
-        handle_equipment_pagination
+        show_equipment_types_menu,
+        handle_equipment_pagination,
+        show_export_database_menu,
+        handle_export_database_callback
     )
     from bot.handlers.work import (
         start_work,
@@ -445,6 +448,13 @@ def register_handlers(application: Application) -> None:
             States.WORK_EQUIPMENT_MODEL_INPUT: [
                 CallbackQueryHandler(handle_work_model_suggestion, pattern="^work_model:"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, work_equipment_model_input)
+            ],
+            States.WORK_BATTERY_SERIAL_INPUT: [
+                MessageHandler(filters.PHOTO, work_battery_serial_input),
+                MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, work_battery_serial_input)
+            ],
+            States.WORK_BATTERY_CONFIRMATION: [
+                CallbackQueryHandler(handle_work_confirmation, pattern="^(confirm|cancel)_work$")
             ],
             States.WORK_CONFIRMATION: [
                 CallbackQueryHandler(handle_work_confirmation, pattern="^(confirm|cancel)_work$")

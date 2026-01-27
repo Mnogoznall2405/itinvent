@@ -6,6 +6,7 @@
 """
 import logging
 import os
+import json
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
 from openpyxl import Workbook
@@ -41,6 +42,7 @@ async def show_export_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         [InlineKeyboardButton("🔄 Экспорт перемещений", callback_data="export_type:transfers")],
         [InlineKeyboardButton("🔧 Экспорт замен комплектующих", callback_data="export_type:cartridges")],
         [InlineKeyboardButton("📦 Экспорт установок оборудования", callback_data="export_type:installations")],
+        [InlineKeyboardButton("🔋 Экспорт замены батареи ИБП", callback_data="export_type:battery")],
         [InlineKeyboardButton("🔙 Назад в главное меню", callback_data="back_to_main")]
     ]
 
@@ -164,6 +166,10 @@ async def handle_export_period(update: Update, context: ContextTypes.DEFAULT_TYP
     callback_data = query.data
     export_type = context.user_data.get('export_type', 'unfound')
 
+    if callback_data.startswith("battery_period:"):
+        period = callback_data.split(":")[1]
+        return await generate_battery_export(update, context, period)
+
     if callback_data.startswith("export_period:"):
         period = callback_data.split(":")[1]
         context.user_data['export_period'] = period
@@ -182,6 +188,7 @@ async def handle_export_period(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("🔄 Экспорт перемещений", callback_data="export_type:transfers")],
             [InlineKeyboardButton("🔧 Экспорт замен комплектующих", callback_data="export_type:cartridges")],
             [InlineKeyboardButton("📦 Экспорт установок оборудования", callback_data="export_type:installations")],
+            [InlineKeyboardButton("🔋 Экспорт замены батареи ИБП", callback_data="export_type:battery")],
             [InlineKeyboardButton("🔙 Назад в главное меню", callback_data="back_to_main")]
         ]
 
@@ -352,7 +359,7 @@ async def handle_export_database(update: Update, context: ContextTypes.DEFAULT_T
             elif export_type == 'installations':
                 # Экспорт установок оборудования
                 excel_file = export_installations_to_excel(only_new=only_new, db_filter=db_filter)
-                
+
                 if excel_file and os.path.exists(excel_file):
                     context.user_data['export_file'] = excel_file
                     return await show_delivery_options(update, context, excel_file)
@@ -360,8 +367,12 @@ async def handle_export_database(update: Update, context: ContextTypes.DEFAULT_T
                     await query.edit_message_text(
                         "❌ Нет данных для экспорта или ошибка создания файла."
                     )
-                    return ConversationHandler.END
-        
+                    return ConversationHandler
+
+            elif export_type == 'battery':
+                # Экспорт замены батареи ИБП - показываем выбор периода
+                return await handle_battery_export_directly(update, context)
+
         except Exception as e:
             logger.error(f"Ошибка при экспорте: {e}")
             await query.edit_message_text(
@@ -735,6 +746,134 @@ def export_installations_to_excel(only_new: bool = False, db_filter: str = None)
         return None
 
 
+async def handle_battery_export_directly(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обрабатывает экспорт замены батареи напрямую"""
+    query = update.callback_query
+    await query.answer()
+
+    # Показываем выбор периода
+    keyboard = [
+        [InlineKeyboardButton("📅 За сегодня", callback_data="battery_period:today")],
+        [InlineKeyboardButton("📅 За неделю", callback_data="battery_period:week")],
+        [InlineKeyboardButton("📅 За месяц", callback_data="battery_period:month")],
+        [InlineKeyboardButton("📅 За всё время", callback_data="battery_period:all")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_export_menu")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_text(
+        "🔋 <b>Экспорт замены батареи ИБП</b>\n\n"
+        "Выберите период:",
+        parse_mode='HTML',
+        reply_markup=reply_markup
+    )
+
+    return States.EXPORT_PERIOD_SELECTION
+
+
+async def generate_battery_export(update: Update, context: ContextTypes.DEFAULT_TYPE, period: str) -> int:
+    """Генерирует Excel файл с заменами батареи за период"""
+    import os
+    from datetime import datetime, timedelta
+    import pandas as pd
+    from pathlib import Path
+
+    query = update.callback_query
+    await query.answer()
+
+    # Загружаем данные
+    file_path = Path("data/battery_replacements.json")
+
+    if not file_path.exists():
+        await query.edit_message_text("❌ Нет данных для экспорта")
+        return await show_export_menu_from_callback(update, context)
+
+    with open(file_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    # Фильтруем по периоду
+    now = datetime.now()
+    if period == 'today':
+        cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif period == 'week':
+        cutoff = now - timedelta(days=7)
+    elif period == 'month':
+        cutoff = now - timedelta(days=30)
+    else:  # all
+        cutoff = datetime.min
+
+    filtered_data = [
+        item for item in data
+        if datetime.fromisoformat(item['timestamp']) >= cutoff
+    ]
+
+    if not filtered_data:
+        await query.edit_message_text("❌ Нет данных за выбранный период")
+        return await show_export_menu_from_callback(update, context)
+
+    # Создаем DataFrame
+    df_data = []
+    for item in filtered_data:
+        dt = datetime.fromisoformat(item['timestamp'])
+        df_data.append({
+            'Дата': dt.strftime('%d.%m.%Y'),
+            'Время': dt.strftime('%H:%M:%S'),
+            'Серийный номер': item.get('serial_no', ''),
+            'Апп. серийный': item.get('hw_serial_no', ''),
+            'Модель': item.get('model_name', ''),
+            'Производитель': item.get('manufacturer', ''),
+            'Филиал': item.get('branch', ''),
+            'Локация': item.get('location', ''),
+            'Сотрудник': item.get('employee', ''),
+            'Инв. номер': item.get('inv_no', ''),
+            'База данных': item.get('db_name', '')
+        })
+
+    df = pd.DataFrame(df_data)
+
+    # Создаем директорию для экспорта
+    export_dir = "exports"
+    os.makedirs(export_dir, exist_ok=True)
+
+    # Формируем имя файла
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    excel_file = os.path.join(export_dir, f"battery_replacements_{period}_{timestamp}.xlsx")
+
+    # Сохраняем в Excel
+    df.to_excel(excel_file, index=False, sheet_name='Замены батареи')
+
+    # Отправляем файл
+    await query.edit_message_text(
+        f"⏳ Экспортирую данные о заменах батареи..."
+    )
+
+    with open(excel_file, 'rb') as f:
+        await context.bot.send_document(
+            chat_id=query.message.chat_id,
+            document=f,
+            filename=os.path.basename(excel_file),
+            caption=f"✅ Экспорт замены батареи ({period})\n\nВсего записей: {len(filtered_data)}",
+            parse_mode='HTML'
+        )
+
+    logger.info(f"Экспорт замены батареи завершен: {excel_file} ({len(filtered_data)} записей)")
+
+    # Возвращаемся в меню экспорта
+    return await show_export_menu_from_callback(update, context)
+
+
+async def show_export_menu_from_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Показывает меню экспорта из callback"""
+    from bot.utils.keyboards import create_export_keyboard
+
+    await context.bot.send_message(
+        chat_id=update.callback_query.message.chat_id,
+        text="📤 <b>Меню экспорта</b>\n\nВыберите тип экспорта:",
+        parse_mode='HTML',
+        reply_markup=create_export_keyboard()
+    )
+
+    return States.EXPORT_MENU
 
 
 def get_period_name_ru(period: str) -> str:

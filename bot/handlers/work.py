@@ -23,11 +23,12 @@ async def start_work(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     keyboard = [
         [InlineKeyboardButton("🔧 Замена комплектующих МФУ", callback_data="work:cartridge")],
         [InlineKeyboardButton("📦 Установка нового оборудования", callback_data="work:installation")],
+        [InlineKeyboardButton("🔋 Замена батареи ИБП", callback_data="work:battery_replacement")],
         [InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    logger.info(f"[WORK] Создана клавиатура с кнопками: cartridge, installation, back_to_main")
+
+    logger.info(f"[WORK] Создана клавиатура с кнопками: cartridge, installation, battery_replacement, back_to_main")
     
     if update.callback_query:
         logger.info(f"[WORK] Отправка меню через callback_query")
@@ -106,7 +107,17 @@ async def handle_work_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             parse_mode='HTML'
         )
         return States.WORK_BRANCH_INPUT
-    
+
+    elif work_type == 'battery_replacement':
+        context.user_data['work_type'] = 'battery_replacement'
+        await query.edit_message_text(
+            "🔋 <b>Замена батареи ИБП</b>\n\n"
+            "📷 Отправьте фото серийного номера\n"
+            "Или введите серийный номер ИБП:",
+            parse_mode='HTML'
+        )
+        return States.WORK_BATTERY_SERIAL_INPUT
+
     return States.WORK_TYPE_SELECTION
 
 
@@ -513,6 +524,103 @@ async def work_component_input(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 @handle_errors
+async def work_battery_serial_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обработчик ввода серийного номера ИБП с поддержкой OCR
+    """
+    from bot.services.ocr_service import extract_serial_from_image, validate_serial_format
+    import os
+    from database_manager import database_manager
+
+    serial_number = None
+
+    # Обработка фотографии
+    if update.message.photo:
+        status_msg = await update.message.reply_text("🔍 Анализирую изображение...")
+
+        try:
+            photo = update.message.photo[-1]
+            file = await context.bot.get_file(photo.file_id)
+            file_path = f"temp_battery_{update.effective_user.id}.jpg"
+            await file.download_to_drive(file_path)
+
+            # Распознаем серийный номер
+            serial_number = await extract_serial_from_image(file_path)
+
+            # Удаляем временный файл
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+            try:
+                await status_msg.delete()
+            except:
+                pass
+
+        except Exception as e:
+            logger.error(f"Error processing photo: {e}")
+            await update.message.reply_text(
+                "❌ Не удалось распознать серийный номер.\n"
+                "Пожалуйста, введите его вручную:"
+            )
+            return States.WORK_BATTERY_SERIAL_INPUT
+
+    # Обработка текстового ввода
+    elif update.message.text:
+        serial_number = update.message.text.strip()
+
+    if not serial_number:
+        await update.message.reply_text(
+            "❌ Серийный номер не указан.\n"
+            "Отправьте фото или введите серийный номер:"
+        )
+        return States.WORK_BATTERY_SERIAL_INPUT
+
+    # Валидация формата
+    if not validate_serial_format(serial_number):
+        await update.message.reply_text(
+            f"⚠️ Неверный формат серийного номера: {serial_number}\n\n"
+            "Серийный номер должен содержать буквы и цифры.\n"
+            "Попробуйте еще раз:"
+        )
+        return States.WORK_BATTERY_SERIAL_INPUT
+
+    # Сохраняем серийный номер
+    context.user_data['battery_serial_no'] = serial_number
+
+    # Поиск ИБП в базе данных
+    user_id = update.effective_user.id
+    db_name = database_manager.get_user_database(user_id)
+    config = database_manager.get_database_config(db_name)
+
+    if config:
+        from universal_database import UniversalInventoryDB
+        db = UniversalInventoryDB(config)
+
+        # Поиск по серийному номеру
+        equipment_list = db.find_by_serial_number(serial_number)
+
+        if equipment_list and len(equipment_list) > 0:
+            # Найден ИБП - сохраняем данные
+            equipment = equipment_list[0]
+            context.user_data['battery_equipment'] = equipment
+
+            # Показываем информацию для подтверждения
+            return await show_battery_confirmation(update, context, equipment)
+        else:
+            # ИБП не найден
+            await update.message.reply_text(
+                f"⚠️ ИБП с серийным номером <b>{serial_number}</b> не найден в базе данных.\n\n"
+                f"📊 База: {db_name}\n\n"
+                "Проверьте серийный номер и попробуйте снова:",
+                parse_mode='HTML'
+            )
+            return States.WORK_BATTERY_SERIAL_INPUT
+    else:
+        await update.message.reply_text("❌ Ошибка подключения к базе данных")
+        return ConversationHandler.END
+
+
+@handle_errors
 async def work_equipment_type_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     Обработчик ввода типа оборудования с подсказками
@@ -541,6 +649,54 @@ async def work_equipment_type_input(update: Update, context: ContextTypes.DEFAUL
     )
 
     return States.WORK_EQUIPMENT_MODEL_INPUT
+
+
+async def show_battery_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, equipment: dict) -> int:
+    """
+    Показывает подтверждение для замены батареи ИБП
+    """
+    serial_no = equipment.get('SERIAL_NO', 'N/A')
+    hw_serial_no = equipment.get('HW_SERIAL_NO', '')
+    model_name = equipment.get('MODEL_NAME', 'Неизвестная модель')
+    branch = equipment.get('BRANCH_NAME', 'Не указан')
+    location = equipment.get('LOCATION', 'Не указано')
+    employee = equipment.get('EMPLOYEE_NAME', 'Не назначен')
+
+    # Формируем текст подтверждения
+    serial_display = f"{serial_no} / {hw_serial_no}" if hw_serial_no else serial_no
+
+    confirmation_text = (
+        "📋 <b>Подтверждение замены батареи ИБП</b>\n\n"
+        f"🔢 <b>Серийный номер:</b> {serial_display}\n"
+        f"🖥️ <b>Модель:</b> {model_name}\n"
+        f"🏢 <b>Филиал:</b> {branch}\n"
+        f"📍 <b>Локация:</b> {location}\n"
+        f"👤 <b>Сотрудник:</b> {employee}\n\n"
+        "❓ Сохранить эти данные?"
+    )
+
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Сохранить", callback_data="confirm_work"),
+            InlineKeyboardButton("❌ Отменить", callback_data="cancel_work")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if update.callback_query:
+        await update.callback_query.message.reply_text(
+            confirmation_text,
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+    else:
+        await update.message.reply_text(
+            confirmation_text,
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+
+    return States.WORK_BATTERY_CONFIRMATION
 
 
 @handle_errors
@@ -1070,6 +1226,8 @@ async def handle_work_confirmation(update: Update, context: ContextTypes.DEFAULT
         
         if work_type == 'cartridge':
             success = await save_component_replacement(context)  # Используем новую универсальную функцию
+        elif work_type == 'battery_replacement':
+            success = await save_battery_replacement(context)
         else:  # installation
             success = await save_equipment_installation(context)
         
@@ -1226,6 +1384,59 @@ async def save_equipment_installation(context: ContextTypes.DEFAULT_TYPE) -> boo
         return False
 
 
+async def save_battery_replacement(context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """
+    Сохраняет данные о замене батареи ИБП в JSON
+    """
+    import json
+    from pathlib import Path
+    from database_manager import database_manager
+
+    try:
+        file_path = Path("data/battery_replacements.json")
+
+        # Загружаем существующие данные
+        if file_path.exists():
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        else:
+            data = []
+
+        # Получаем текущую БД пользователя
+        user_id = context._user_id if hasattr(context, '_user_id') else None
+        db_name = database_manager.get_user_database(user_id) if user_id else 'ITINVENT'
+
+        # Получаем данные об ИБП
+        equipment = context.user_data.get('battery_equipment', {})
+
+        # Создаем запись
+        record = {
+            'serial_no': context.user_data.get('battery_serial_no', ''),
+            'hw_serial_no': equipment.get('HW_SERIAL_NO', ''),
+            'model_name': equipment.get('MODEL_NAME', ''),
+            'manufacturer': equipment.get('MANUFACTURER', ''),
+            'branch': equipment.get('BRANCH_NAME', ''),
+            'location': equipment.get('LOCATION', ''),
+            'employee': equipment.get('EMPLOYEE_NAME', ''),
+            'inv_no': equipment.get('INV_NO', ''),
+            'db_name': db_name,
+            'timestamp': datetime.now().isoformat()
+        }
+
+        data.append(record)
+
+        # Сохраняем
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"Сохранена замена батареи ИБП: {record}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Ошибка сохранения замены батареи: {e}")
+        return False
+
+
 def clear_work_data(context: ContextTypes.DEFAULT_TYPE):
     """
     Очищает временные данные работы
@@ -1238,7 +1449,8 @@ def clear_work_data(context: ContextTypes.DEFAULT_TYPE):
         'pending_work_location', 'work_location_suggestions',
         'pending_work_printer_model', 'work_printer_model_suggestions',
         'pending_work_equipment_type', 'work_equipment_type_suggestions',
-        'pending_work_equipment_model', 'work_equipment_model_suggestions'
+        'pending_work_equipment_model', 'work_equipment_model_suggestions',
+        'battery_serial_no', 'battery_equipment'
     ]
     
     for key in keys_to_clear:

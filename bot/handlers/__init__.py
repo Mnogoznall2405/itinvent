@@ -39,7 +39,9 @@ from .database import (
     show_database_menu,
     handle_database_callback,
     show_equipment_types_menu,
-    handle_equipment_pagination
+    handle_equipment_pagination,
+    show_export_database_menu,
+    handle_export_database_callback
 )
 from .export import (
     show_export_menu,
@@ -48,6 +50,11 @@ from .export import (
     handle_export_database,
     handle_delivery,
     handle_email_input
+)
+from .work import (
+    work_battery_serial_input,
+    show_battery_confirmation,
+    save_battery_replacement
 )
 
 __all__ = [
@@ -90,6 +97,8 @@ __all__ = [
     'handle_database_callback',
     'show_equipment_types_menu',
     'handle_equipment_pagination',
+    'show_export_database_menu',
+    'handle_export_database_callback',
     # Export handlers
     'show_export_menu',
     'handle_export_type',
@@ -97,4 +106,8 @@ __all__ = [
     'handle_export_database',
     'handle_delivery',
     'handle_email_input',
+    # Work handlers
+    'work_battery_serial_input',
+    'show_battery_confirmation',
+    'save_battery_replacement',
 ]
