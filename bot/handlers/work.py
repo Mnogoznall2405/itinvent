@@ -597,11 +597,18 @@ async def work_battery_serial_input(update: Update, context: ContextTypes.DEFAUL
         db = UniversalInventoryDB(config)
 
         # Поиск по серийному номеру
-        equipment_list = db.find_by_serial_number(serial_number)
+        result = db.find_by_serial_number(serial_number)
 
-        if equipment_list and len(equipment_list) > 0:
+        # Проверяем тип результата - может быть список или одиночная запись
+        equipment = None
+        if isinstance(result, list):
+            if result and len(result) > 0:
+                equipment = result[0]
+        elif result is not None:
+            equipment = result
+
+        if equipment:
             # Найден ИБП - сохраняем данные
-            equipment = equipment_list[0]
             context.user_data['battery_equipment'] = equipment
 
             # Показываем информацию для подтверждения
