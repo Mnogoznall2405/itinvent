@@ -22,13 +22,12 @@ async def start_work(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     
     keyboard = [
         [InlineKeyboardButton("🔧 Замена комплектующих МФУ", callback_data="work:cartridge")],
-        [InlineKeyboardButton("📦 Установка нового оборудования", callback_data="work:installation")],
         [InlineKeyboardButton("🔋 Замена батареи ИБП", callback_data="work:battery_replacement")],
         [InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    logger.info(f"[WORK] Создана клавиатура с кнопками: cartridge, installation, battery_replacement, back_to_main")
+    logger.info(f"[WORK] Создана клавиатура с кнопками: cartridge, battery_replacement, back_to_main")
     
     if update.callback_query:
         logger.info(f"[WORK] Отправка меню через callback_query")
@@ -94,15 +93,6 @@ async def handle_work_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         context.user_data['work_type'] = 'cartridge'
         await query.edit_message_text(
             "🔧 <b>Замена комплектующих МФУ</b>\n\n"
-            "📍 Введите местоположение (филиал):",
-            parse_mode='HTML'
-        )
-        return States.WORK_BRANCH_INPUT
-    
-    elif work_type == 'installation':
-        context.user_data['work_type'] = 'installation'
-        await query.edit_message_text(
-            "📦 <b>Установка нового оборудования</b>\n\n"
             "📍 Введите местоположение (филиал):",
             parse_mode='HTML'
         )
@@ -185,12 +175,10 @@ async def work_location_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             "🖨️ Введите модель принтера:"
         )
         return States.WORK_PRINTER_MODEL_INPUT
-    else:  # installation
-        logger.info(f"[WORK] Запрос типа оборудования для установки")
-        await update.message.reply_text(
-            "🔧 Введите тип оборудования:"
-        )
-        return States.WORK_EQUIPMENT_TYPE_INPUT
+    else:
+        logger.error(f"[WORK] Неизвестный тип работы в work_location_input: {work_type}")
+        await update.message.reply_text("❌ Ошибка: неизвестный тип работы")
+        return ConversationHandler.END
 
 
 @handle_errors
@@ -627,37 +615,6 @@ async def work_battery_serial_input(update: Update, context: ContextTypes.DEFAUL
         return ConversationHandler.END
 
 
-@handle_errors
-async def work_equipment_type_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    Обработчик ввода типа оборудования с подсказками
-    """
-    from bot.handlers.suggestions_handler import show_equipment_type_suggestions_on_input
-
-    equipment_type = update.message.text.strip()
-
-    # Показываем подсказки если есть совпадения
-    try:
-        if await show_equipment_type_suggestions_on_input(
-            update, context, equipment_type,
-            mode='work',
-            pending_key='pending_work_equipment_type',
-            suggestions_key='work_equipment_type_suggestions'
-        ):
-            return States.WORK_EQUIPMENT_TYPE_INPUT
-    except Exception as e:
-        logger.error(f"Ошибка при показе подсказок типов оборудования: {e}")
-        # Продолжаем выполнение даже если подсказки не сработали
-
-    context.user_data['work_equipment_type'] = equipment_type
-
-    await update.message.reply_text(
-        "🏭 Введите модель оборудования:"
-    )
-
-    return States.WORK_EQUIPMENT_MODEL_INPUT
-
-
 async def show_battery_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, equipment: dict) -> int:
     """
     Показывает подтверждение для замены батареи ИБП
@@ -704,49 +661,6 @@ async def show_battery_confirmation(update: Update, context: ContextTypes.DEFAUL
         )
 
     return States.WORK_BATTERY_CONFIRMATION
-
-
-@handle_errors
-async def work_equipment_model_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    Обработчик ввода модели оборудования с подсказками
-    """
-    from bot.handlers.suggestions_handler import show_model_suggestions
-
-    model = update.message.text.strip()
-
-    # Показываем подсказки если есть совпадения
-    try:
-        if await show_model_suggestions(
-            update, context, model,
-            mode='work',
-            pending_key='pending_work_equipment_model',
-            suggestions_key='work_equipment_model_suggestions',
-            equipment_type='all'
-        ):
-            return States.WORK_EQUIPMENT_MODEL_INPUT
-    except Exception as e:
-        logger.error(f"Ошибка при показе подсказок моделей оборудования: {e}")
-        # Продолжаем выполнение даже если подсказки не сработали
-
-    context.user_data['work_equipment_model'] = model
-
-    # Показываем подтверждение для установки
-    try:
-        await show_installation_confirmation(update, context)
-    except Exception as e:
-        logger.error(f"Ошибка при показе подтверждения установки: {e}")
-        # Показываем простое текстовое подтверждение
-        equipment_type = context.user_data.get('work_equipment_type', '')
-        await update.message.reply_text(
-            f"✅ Принято: {equipment_type} {model}\n"
-            f"Данные сохранены."
-        )
-        clear_work_data(context)
-        from telegram.ext import ConversationHandler
-        return ConversationHandler.END
-
-    return States.WORK_CONFIRMATION
 
 
 @handle_errors
@@ -1172,50 +1086,6 @@ async def show_cartridge_confirmation(update: Update, context: ContextTypes.DEFA
     return States.WORK_CONFIRMATION
 
 
-async def show_installation_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Показывает подтверждение для установки оборудования
-    """
-    try:
-        branch = context.user_data.get('work_branch', '')
-        location = context.user_data.get('work_location', '')
-        equipment_type = context.user_data.get('work_equipment_type', '')
-        equipment_model = context.user_data.get('work_equipment_model', '')
-
-        confirmation_text = (
-            "📋 <b>Подтверждение установки оборудования</b>\n\n"
-            f"📍 <b>Филиал:</b> {branch}\n"
-            f"📍 <b>Локация:</b> {location}\n"
-            f"🔧 <b>Тип оборудования:</b> {equipment_type}\n"
-            f"🏭 <b>Модель:</b> {equipment_model}\n\n"
-            "❓ Сохранить эти данные?"
-        )
-
-        keyboard = [
-            [
-                InlineKeyboardButton("✅ Сохранить", callback_data="confirm_work"),
-                InlineKeyboardButton("❌ Отменить", callback_data="cancel_work")
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        await update.message.reply_text(
-            confirmation_text,
-            parse_mode='HTML',
-            reply_markup=reply_markup
-        )
-    except Exception as e:
-        logger.error(f"Ошибка в show_installation_confirmation: {e}")
-        # Если не удалось показать клавиатуру, просто подтверждаем сохранение
-        await update.message.reply_text(
-            f"✅ Данные приняты:\n"
-            f"📍 Филиал: {context.user_data.get('work_branch', '')}\n"
-            f"📍 Локация: {context.user_data.get('work_location', '')}\n"
-            f"🔧 Тип: {context.user_data.get('work_equipment_type', '')}\n"
-            f"🏭 Модель: {context.user_data.get('work_equipment_model', '')}"
-        )
-
-
 @handle_errors
 async def handle_work_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
@@ -1232,11 +1102,12 @@ async def handle_work_confirmation(update: Update, context: ContextTypes.DEFAULT
         work_type = context.user_data.get('work_type')
         
         if work_type == 'cartridge':
-            success = await save_component_replacement(context)  # Используем новую универсальную функцию
+            success = await save_component_replacement(context)
         elif work_type == 'battery_replacement':
             success = await save_battery_replacement(context)
-        else:  # installation
-            success = await save_equipment_installation(context)
+        else:
+            success = False
+            logger.error(f"Неизвестный тип работы: {work_type}")
         
         if success:
             await query.edit_message_text(
@@ -1343,52 +1214,6 @@ async def save_cartridge_replacement(context: ContextTypes.DEFAULT_TYPE) -> bool
     Сохраняет данные о замене картриджа в JSON (обратная совместимость)
     """
     return await save_component_replacement(context)
-
-
-async def save_equipment_installation(context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """
-    Сохраняет данные об установке оборудования в JSON
-    """
-    import json
-    from pathlib import Path
-    from database_manager import database_manager
-    
-    try:
-        file_path = Path("data/equipment_installations.json")
-        
-        # Загружаем существующие данные
-        if file_path.exists():
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        else:
-            data = []
-        
-        # Получаем текущую БД пользователя
-        user_id = context._user_id if hasattr(context, '_user_id') else None
-        db_name = database_manager.get_user_database(user_id) if user_id else 'ITINVENT'
-        
-        # Создаем новую запись
-        record = {
-            'branch': context.user_data.get('work_branch', ''),
-            'location': context.user_data.get('work_location', ''),
-            'equipment_type': context.user_data.get('work_equipment_type', ''),
-            'equipment_model': context.user_data.get('work_equipment_model', ''),
-            'db_name': db_name,
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        data.append(record)
-        
-        # Сохраняем
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        
-        logger.info(f"Сохранена установка оборудования: {record}")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Ошибка сохранения установки оборудования: {e}")
-        return False
 
 
 async def save_battery_replacement(context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -1630,17 +1455,11 @@ async def handle_work_model_suggestion(update: Update, context: ContextTypes.DEF
 
                 return await show_component_selection(update, context, components_data)
         else:
-            pending = context.user_data.get('pending_work_equipment_model', '').strip()
-            context.user_data['work_equipment_model'] = pending
-            await query.edit_message_text(f"✅ Принято: {pending}")
-            
-            # Создаем временный update для show_installation_confirmation
-            from telegram import Message
-            temp_message = query.message
-            temp_update = Update(update.update_id, message=temp_message)
-            await show_installation_confirmation(temp_update, context)
-            return States.WORK_CONFIRMATION
-    
+            # Неизвестный тип работы
+            logger.error(f"Неизвестный тип работы в handle_work_model_suggestion (manual): {work_type}")
+            await query.edit_message_text("❌ Ошибка: неизвестный тип работы")
+            return ConversationHandler.END
+
     elif data.startswith('work_model:'):
         # Обработка кнопки обновления поиска
         if data == 'work_model:refresh':
@@ -1748,56 +1567,11 @@ async def handle_work_model_suggestion(update: Update, context: ContextTypes.DEF
                             )
 
                             return await show_component_selection(update, context, components_data)
-                elif work_type == 'equipment':
-                    suggestions = context.user_data.get('work_equipment_model_suggestions', [])
-                    if 0 <= idx < len(suggestions):
-                        selected_model = suggestions[idx]
-                        context.user_data['work_equipment_model'] = selected_model
-                        await query.edit_message_text(f"✅ Выбрана модель: {selected_model}")
-
-                        from telegram import Message
-                        temp_message = query.message
-                        temp_update = Update(update.update_id, message=temp_message)
-                        await show_installation_confirmation(temp_update, context)
-                        return States.WORK_CONFIRMATION
         except (ValueError, IndexError) as e:
             logger.error(f"Ошибка обработки выбора модели: {e}")
-    
+
     if work_type == 'cartridge':
         return States.WORK_PRINTER_MODEL_INPUT
     else:
-        return States.WORK_EQUIPMENT_MODEL_INPUT
-
-
-@handle_errors
-async def handle_work_type_suggestion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    Обработчик выбора типа оборудования из подсказок
-    """
-    query = update.callback_query
-    await query.answer()
-    
-    data = query.data
-    
-    if data == 'work_type:manual':
-        pending = context.user_data.get('pending_work_equipment_type', '').strip()
-        context.user_data['work_equipment_type'] = pending
-        await query.edit_message_text(f"✅ Принято: {pending}")
-        await query.message.reply_text("🏭 Введите модель оборудования:")
-        return States.WORK_EQUIPMENT_MODEL_INPUT
-    
-    elif data.startswith('work_type:'):
-        try:
-            idx = int(data.split(':', 1)[1])
-            suggestions = context.user_data.get('work_equipment_type_suggestions', [])
-            
-            if 0 <= idx < len(suggestions):
-                selected_type = suggestions[idx]
-                context.user_data['work_equipment_type'] = selected_type
-                await query.edit_message_text(f"✅ Выбран тип: {selected_type}")
-                await query.message.reply_text("🏭 Введите модель оборудования:")
-                return States.WORK_EQUIPMENT_MODEL_INPUT
-        except (ValueError, IndexError) as e:
-            logger.error(f"Ошибка обработки выбора типа: {e}")
-    
-    return States.WORK_EQUIPMENT_TYPE_INPUT
+        logger.error(f"Неизвестный тип работы в handle_work_model_suggestion: {work_type}")
+        return ConversationHandler.END

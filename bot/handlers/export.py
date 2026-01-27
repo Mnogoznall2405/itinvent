@@ -41,7 +41,6 @@ async def show_export_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         [InlineKeyboardButton("📦 Экспорт ненайденного оборудования", callback_data="export_type:unfound")],
         [InlineKeyboardButton("🔄 Экспорт перемещений", callback_data="export_type:transfers")],
         [InlineKeyboardButton("🔧 Экспорт замен комплектующих", callback_data="export_type:cartridges")],
-        [InlineKeyboardButton("📦 Экспорт установок оборудования", callback_data="export_type:installations")],
         [InlineKeyboardButton("🔋 Экспорт замены батареи ИБП", callback_data="export_type:battery")],
         [InlineKeyboardButton("🔙 Назад в главное меню", callback_data="back_to_main")]
     ]
@@ -130,7 +129,6 @@ async def show_export_period(update: Update, context: ContextTypes.DEFAULT_TYPE)
         'unfound': 'ненайденного оборудования',
         'transfers': 'перемещений',
         'cartridges': 'замен комплектующих',
-        'installations': 'установок оборудования',
         'battery': 'замен батареи ИБП'
     }
     type_name = type_names.get(export_type, 'данных')
@@ -188,7 +186,6 @@ async def handle_export_period(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("📦 Экспорт ненайденного оборудования", callback_data="export_type:unfound")],
             [InlineKeyboardButton("🔄 Экспорт перемещений", callback_data="export_type:transfers")],
             [InlineKeyboardButton("🔧 Экспорт замен комплектующих", callback_data="export_type:cartridges")],
-            [InlineKeyboardButton("📦 Экспорт установок оборудования", callback_data="export_type:installations")],
             [InlineKeyboardButton("🔋 Экспорт замены батареи ИБП", callback_data="export_type:battery")],
             [InlineKeyboardButton("🔙 Назад в главное меню", callback_data="back_to_main")]
         ]
@@ -356,19 +353,6 @@ async def handle_export_database(update: Update, context: ContextTypes.DEFAULT_T
                         "❌ Нет данных для экспорта или ошибка создания файла."
                     )
                     return ConversationHandler.END
-            
-            elif export_type == 'installations':
-                # Экспорт установок оборудования
-                excel_file = export_installations_to_excel(only_new=only_new, db_filter=db_filter)
-
-                if excel_file and os.path.exists(excel_file):
-                    context.user_data['export_file'] = excel_file
-                    return await show_delivery_options(update, context, excel_file)
-                else:
-                    await query.edit_message_text(
-                        "❌ Нет данных для экспорта или ошибка создания файла."
-                    )
-                    return ConversationHandler
 
             elif export_type == 'battery':
                 # Экспорт замены батареи ИБП - показываем выбор периода
@@ -664,86 +648,6 @@ def export_cartridges_to_excel(only_new: bool = False, db_filter: str = None) ->
         
     except Exception as e:
         logger.error(f"Ошибка экспорта замен комплектующих: {e}")
-        return None
-
-
-def export_installations_to_excel(only_new: bool = False, db_filter: str = None) -> str:
-    """
-    Экспортирует установки оборудования в Excel
-    
-    Параметры:
-        only_new: Экспортировать только новые записи
-        db_filter: Фильтр по базе данных (None = все базы)
-        
-    Возвращает:
-        str: Путь к созданному файлу
-    """
-    import json
-    import pandas as pd
-    from pathlib import Path
-    from datetime import datetime
-    
-    try:
-        file_path = Path("data/equipment_installations.json")
-        
-        if not file_path.exists():
-            return None
-        
-        with open(file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        if not data:
-            return None
-        
-        # Фильтруем по БД если указан фильтр
-        if db_filter:
-            data = [item for item in data if item.get('db_name') == db_filter]
-        
-        if not data:
-            return None
-        
-        # Создаем DataFrame
-        df = pd.DataFrame(data)
-        
-        # Добавляем db_name если отсутствует (для старых записей)
-        if 'db_name' not in df.columns:
-            df['db_name'] = 'ITINVENT'
-        
-        # Форматируем timestamp
-        if 'timestamp' in df.columns:
-            df['timestamp'] = pd.to_datetime(df['timestamp']).dt.strftime('%Y-%m-%d %H:%M:%S')
-        
-        # Переименовываем колонки
-        column_names = {
-            'branch': 'Филиал',
-            'location': 'Локация',
-            'equipment_type': 'Тип оборудования',
-            'equipment_model': 'Модель',
-            'db_name': 'База данных',
-            'timestamp': 'Дата и время'
-        }
-        df = df.rename(columns=column_names)
-        
-        # Упорядочиваем колонки
-        desired_order = ['Дата и время', 'База данных', 'Филиал', 'Локация', 'Тип оборудования', 'Модель']
-        existing_cols = [col for col in desired_order if col in df.columns]
-        df = df[existing_cols]
-        
-        # Создаем имя файла
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_file = f"exports/equipment_installations_{timestamp}.xlsx"
-        
-        # Создаем директорию если не существует
-        Path("exports").mkdir(exist_ok=True)
-        
-        # Сохраняем в Excel
-        df.to_excel(output_file, index=False, engine='openpyxl')
-        
-        logger.info(f"Экспорт установок оборудования завершен: {output_file}")
-        return output_file
-        
-    except Exception as e:
-        logger.error(f"Ошибка экспорта установок оборудования: {e}")
         return None
 
 
