@@ -231,36 +231,8 @@ async def show_model_suggestions(
         try:
             user_id = update.effective_user.id
 
-            # Сначала проверяем в базе данных картриджей для принтеров/МФУ
-            cartridge_suggestions = []
-            if equipment_type in ['printers', 'printers_mfu', 'all']:
-                try:
-                    # Поиск принтеров в базе данных картриджей
-                    cartridge_db = cartridge_database._load_database()
-                    for printer_name in cartridge_db.keys():
-                        if model_name.lower() in printer_name.lower():
-                            cartridge_suggestions.append(printer_name)
-
-                    # Добавляем информацию о совместимости
-                    if cartridge_suggestions:
-                        cartridge_suggestions = sorted(list(set(cartridge_suggestions)))[:5]  # Уникальные и до 5 штук
-                        logger.info(f"Found {len(cartridge_suggestions)} printers in cartridge database for '{model_name}'")
-                except Exception as e:
-                    logger.error(f"Error searching cartridge database: {e}")
-
-            # Затем получаем обычные подсказки из базы данных инвентаризации
-            regular_suggestions = get_model_suggestions(model_name, user_id, equipment_type=equipment_type)
-
-            # Объединяем и удаляем дубликаты
-            all_suggestions = cartridge_suggestions + regular_suggestions
-            unique_suggestions = []
-            seen = set()
-            for suggestion in all_suggestions:
-                if suggestion not in seen:
-                    unique_suggestions.append(suggestion)
-                    seen.add(suggestion)
-
-            suggestions = unique_suggestions
+            # Получаем подсказки ТОЛЬКО из базы данных инвентаризации (SQL)
+            suggestions = get_model_suggestions(model_name, user_id, equipment_type=equipment_type)
 
             if suggestions:
                 context.user_data[suggestions_key] = suggestions
