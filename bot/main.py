@@ -140,7 +140,10 @@ def register_handlers(application: Application) -> None:
         handle_work_branch_suggestion,
         handle_work_location_suggestion,
         handle_work_model_suggestion,
-        handle_work_type_suggestion
+        handle_work_type_suggestion,
+        work_battery_serial_input,
+        show_battery_confirmation,
+        save_battery_replacement
     )
     from bot.handlers.export import (
         show_export_menu,
