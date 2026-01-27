@@ -199,21 +199,23 @@ class UniversalInventoryDB:
         Возвращает:
             Dict[str, Any]: Словарь с информацией об оборудовании или пустой словарь,
                            если оборудование не найдено. Включает поля:
-                           - ITEM_NO: Номер позиции
+                           - ID: ID оборудования
                            - SERIAL_NO: Серийный номер
-                           - INVENTORY_NO: Инвентарный номер
+                           - HW_SERIAL_NO: Аппаратный серийный номер
+                           - INV_NO: Инвентарный номер
+                           - PART_NO: Партийный номер
                            - CI_TYPE: Тип оборудования
                            - TYPE_NAME: Название типа оборудования
                            - MODEL_NO: Номер модели
                            - MODEL_NAME: Название модели
                            - MANUFACTURER: Производитель
                            - LOCATION: Местоположение
-                           - EMPLOYEE_NO: Номер сотрудника
+                           - EMPL_NO: Табельный номер сотрудника
                            - EMPLOYEE_NAME: Имя сотрудника
+                           - EMPLOYEE_DEPT: Отдел сотрудника
+                           - BRANCH_NAME: Филиал
                            - STATUS: Статус оборудования
-                           - PURCHASE_DATE: Дата покупки
-                           - WARRANTY_END: Окончание гарантии
-                           - COST: Стоимость
+                           - DESCRIPTION: Описание
                            
         Исключения:
             Exception: При ошибке выполнения SQL-запроса
@@ -239,6 +241,8 @@ class UniversalInventoryDB:
                 l.DESCR as LOCATION,
                 i.EMPL_NO,
                 o.OWNER_DISPLAY_NAME as EMPLOYEE_NAME,
+                o.OWNER_DEPT as EMPLOYEE_DEPT,
+                b.BRANCH_NAME as BRANCH_NAME,
                 s.DESCR as STATUS,
                 i.DESCR as DESCRIPTION
             FROM ITEMS i
@@ -247,6 +251,7 @@ class UniversalInventoryDB:
             LEFT JOIN VENDORS v ON m.VENDOR_NO = v.VENDOR_NO
             LEFT JOIN LOCATIONS l ON i.LOC_NO = l.LOC_NO
             LEFT JOIN OWNERS o ON i.EMPL_NO = o.OWNER_NO
+            LEFT JOIN BRANCHES b ON i.BRANCH_NO = b.BRANCH_NO
             LEFT JOIN STATUS s ON i.STATUS_NO = s.STATUS_NO
             WHERE i.SERIAL_NO = ? OR i.HW_SERIAL_NO = ?
             """
@@ -266,6 +271,8 @@ class UniversalInventoryDB:
                 'Не указана' as LOCATION,
                 i.EMPL_NO,
                 o.OWNER_DISPLAY_NAME as EMPLOYEE_NAME,
+                o.OWNER_DEPT as EMPLOYEE_DEPT,
+                'Не указан' as BRANCH_NAME,
                 s.DESCR as STATUS,
                 i.DESCR as DESCRIPTION
             FROM ITEMS i
