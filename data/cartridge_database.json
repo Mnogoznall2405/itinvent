@@ -51,7 +51,7 @@
     "components": ["cartridge", "fuser"]
   },
 
-  "canon i-sensys mf443dw": {
+  "canon i-sensys mf443": {
     "oem_cartridge": "Canon 057H",
     "is_color": false,
     "compatible_models": [

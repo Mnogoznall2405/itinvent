@@ -54,7 +54,10 @@ from .export import (
 from .work import (
     work_battery_serial_input,
     show_battery_confirmation,
-    save_battery_replacement
+    save_battery_replacement,
+    work_pc_cleaning_serial_input,
+    show_pc_cleaning_confirmation,
+    save_pc_cleaning
 )
 
 __all__ = [
@@ -110,4 +113,7 @@ __all__ = [
     'work_battery_serial_input',
     'show_battery_confirmation',
     'save_battery_replacement',
+    'work_pc_cleaning_serial_input',
+    'show_pc_cleaning_confirmation',
+    'save_pc_cleaning',
 ]

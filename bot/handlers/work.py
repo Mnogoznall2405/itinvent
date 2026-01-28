@@ -23,11 +23,12 @@ async def start_work(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     keyboard = [
         [InlineKeyboardButton("🔧 Замена комплектующих МФУ", callback_data="work:cartridge")],
         [InlineKeyboardButton("🔋 Замена батареи ИБП", callback_data="work:battery_replacement")],
+        [InlineKeyboardButton("🖥️ Чистка ПК", callback_data="work:pc_cleaning")],
         [InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    logger.info(f"[WORK] Создана клавиатура с кнопками: cartridge, battery_replacement, back_to_main")
+    logger.info(f"[WORK] Создана клавиатура с кнопками: cartridge, battery_replacement, pc_cleaning, back_to_main")
     
     if update.callback_query:
         logger.info(f"[WORK] Отправка меню через callback_query")
@@ -107,6 +108,16 @@ async def handle_work_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             parse_mode='HTML'
         )
         return States.WORK_BATTERY_SERIAL_INPUT
+
+    elif work_type == 'pc_cleaning':
+        context.user_data['work_type'] = 'pc_cleaning'
+        await query.edit_message_text(
+            "🖥️ <b>Чистка ПК</b>\n\n"
+            "📷 Отправьте фото серийного номера\n"
+            "Или введите серийный номер ПК:",
+            parse_mode='HTML'
+        )
+        return States.WORK_PC_CLEANING_SERIAL_INPUT
 
     return States.WORK_TYPE_SELECTION
 
@@ -664,6 +675,218 @@ async def show_battery_confirmation(update: Update, context: ContextTypes.DEFAUL
 
 
 @handle_errors
+async def work_pc_cleaning_serial_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обработчик ввода серийного номера ПК с поддержкой OCR
+    """
+    from bot.services.ocr_service import extract_serial_from_image, validate_serial_format
+    import os
+    from database_manager import database_manager
+
+    serial_number = None
+
+    # Обработка фотографии
+    if update.message.photo:
+        status_msg = await update.message.reply_text("🔍 Анализирую изображение...")
+
+        try:
+            photo = update.message.photo[-1]
+            file = await context.bot.get_file(photo.file_id)
+            file_path = f"temp_pc_cleaning_{update.effective_user.id}.jpg"
+            await file.download_to_drive(file_path)
+
+            # Распознаем серийный номер
+            serial_number = await extract_serial_from_image(file_path)
+
+            # Удаляем временный файл
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+            try:
+                await status_msg.delete()
+            except:
+                pass
+
+        except Exception as e:
+            logger.error(f"Error processing photo: {e}")
+            await update.message.reply_text(
+                "❌ Не удалось распознать серийный номер.\n"
+                "Пожалуйста, введите его вручную:"
+            )
+            return States.WORK_PC_CLEANING_SERIAL_INPUT
+
+    # Обработка текстового ввода
+    elif update.message.text:
+        serial_number = update.message.text.strip()
+
+    if not serial_number:
+        await update.message.reply_text(
+            "❌ Серийный номер не указан.\n"
+            "Отправьте фото или введите серийный номер:"
+        )
+        return States.WORK_PC_CLEANING_SERIAL_INPUT
+
+    # Валидация формата
+    if not validate_serial_format(serial_number):
+        await update.message.reply_text(
+            f"⚠️ Неверный формат серийного номера: {serial_number}\n\n"
+            "Серийный номер должен содержать буквы и цифры.\n"
+            "Попробуйте еще раз:"
+        )
+        return States.WORK_PC_CLEANING_SERIAL_INPUT
+
+    # Сохраняем серийный номер
+    context.user_data['pc_cleaning_serial_no'] = serial_number
+
+    # Поиск ПК в базе данных
+    user_id = update.effective_user.id
+    db_name = database_manager.get_user_database(user_id)
+    config = database_manager.get_database_config(db_name)
+
+    if config:
+        from universal_database import UniversalInventoryDB
+        db = UniversalInventoryDB(config)
+
+        # Поиск по серийному номеру
+        result = db.find_by_serial_number(serial_number)
+
+        # Проверяем тип результата - может быть список или одиночная запись
+        equipment = None
+        if isinstance(result, list):
+            if result and len(result) > 0:
+                equipment = result[0]
+        elif result is not None:
+            equipment = result
+
+        if equipment:
+            # Найден ПК - сохраняем данные
+            context.user_data['pc_cleaning_equipment'] = equipment
+
+            # Показываем информацию для подтверждения
+            return await show_pc_cleaning_confirmation(update, context, equipment)
+        else:
+            # ПК не найден
+            await update.message.reply_text(
+                f"⚠️ ПК с серийным номером <b>{serial_number}</b> не найден в базе данных.\n\n"
+                f"📊 База: {db_name}\n\n"
+                "Проверьте серийный номер и попробуйте снова:",
+                parse_mode='HTML'
+            )
+            return States.WORK_PC_CLEANING_SERIAL_INPUT
+    else:
+        await update.message.reply_text("❌ Ошибка подключения к базе данных")
+        return ConversationHandler.END
+
+
+async def show_pc_cleaning_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, equipment: dict) -> int:
+    """
+    Показывает подтверждение для чистки ПК с информацией о последней чистке
+    """
+    import json
+    from pathlib import Path
+    from datetime import datetime
+
+    serial_no = equipment.get('SERIAL_NO', 'N/A')
+    hw_serial_no = equipment.get('HW_SERIAL_NO', '')
+    model_name = equipment.get('MODEL_NAME', 'Неизвестная модель')
+    branch = equipment.get('BRANCH_NAME', 'Не указан')
+    location = equipment.get('LOCATION', 'Не указано')
+    employee = equipment.get('EMPLOYEE_NAME', 'Не назначен')
+
+    # Ищем последнюю чистку этого ПК
+    last_cleaning_section = ""
+    file_path = Path("data/pc_cleanings.json")
+
+    if file_path.exists():
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                cleanings = json.load(f)
+
+            # Ищем чистки для этого серийного номера
+            pc_cleanings = [
+                c for c in cleanings
+                if c.get('serial_no') == serial_no or c.get('serial_no') == hw_serial_no
+            ]
+
+            if pc_cleanings:
+                # Сортируем по дате (убывание)
+                pc_cleanings.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+                last_cleaning = pc_cleanings[0]
+                last_date = datetime.fromisoformat(last_cleaning['timestamp'])
+
+                # Вычисляем сколько времени прошло
+                now = datetime.now()
+                delta = now - last_date
+                days_ago = delta.days
+
+                if days_ago == 0:
+                    time_ago = "сегодня"
+                elif days_ago == 1:
+                    time_ago = "вчера"
+                elif days_ago < 7:
+                    time_ago = f"{days_ago} дн. назад"
+                elif days_ago < 30:
+                    weeks = days_ago // 7
+                    time_ago = f"{weeks} нед. {'назад' if weeks == 1 else 'назад'}"
+                elif days_ago < 365:
+                    months = days_ago // 30
+                    time_ago = f"{months} мес. {'назад' if months == 1 else 'назад'}"
+                else:
+                    years = days_ago // 365
+                    time_ago = f"{years} г. {'назад' if years == 1 else 'назад'}"
+
+                # Формируем красивый блок с информацией о последней чистке
+                last_cleaning_section = (
+                    "\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🕒 <b>ИСТОРИЯ ЧИСТОК</b>\n"
+                    f"📅 <b>Последняя:</b> {last_date.strftime('%d.%m.%Y')} в {last_date.strftime('%H:%M')}\n"
+                    f"⏳ <b>Прошло:</b> {time_ago}\n"
+                    f"🔢 <b>Всего чисток:</b> {len(pc_cleanings)}\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                )
+        except Exception as e:
+            logger.error(f"Error reading pc_cleanings.json: {e}")
+
+    # Формируем текст подтверждения
+    serial_display = f"{serial_no} / {hw_serial_no}" if hw_serial_no else serial_no
+
+    confirmation_text = (
+        "📋 <b>Подтверждение чистки ПК</b>\n\n"
+        f"🔢 <b>Серийный номер:</b> {serial_display}\n"
+        f"🖥️ <b>Модель:</b> {model_name}\n"
+        f"🏢 <b>Филиал:</b> {branch}\n"
+        f"📍 <b>Локация:</b> {location}\n"
+        f"👤 <b>Сотрудник:</b> {employee}\n"
+        f"{last_cleaning_section}"
+        "❓ Сохранить новую чистку?"
+    )
+
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Сохранить", callback_data="confirm_work"),
+            InlineKeyboardButton("❌ Отменить", callback_data="cancel_work")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if update.callback_query:
+        await update.callback_query.message.reply_text(
+            confirmation_text,
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+    else:
+        await update.message.reply_text(
+            confirmation_text,
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+
+    return States.WORK_PC_CLEANING_CONFIRMATION
+
+
+@handle_errors
 async def handle_printer_type_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     Обработчик ручного выбора типа принтера (цветной/ч-б)
@@ -1105,6 +1328,8 @@ async def handle_work_confirmation(update: Update, context: ContextTypes.DEFAULT
             success = await save_component_replacement(context)
         elif work_type == 'battery_replacement':
             success = await save_battery_replacement(context)
+        elif work_type == 'pc_cleaning':
+            success = await save_pc_cleaning(context)
         else:
             success = False
             logger.error(f"Неизвестный тип работы: {work_type}")
@@ -1269,6 +1494,59 @@ async def save_battery_replacement(context: ContextTypes.DEFAULT_TYPE) -> bool:
         return False
 
 
+async def save_pc_cleaning(context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """
+    Сохраняет данные о чистке ПК в JSON
+    """
+    import json
+    from pathlib import Path
+    from database_manager import database_manager
+
+    try:
+        file_path = Path("data/pc_cleanings.json")
+
+        # Загружаем существующие данные
+        if file_path.exists():
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        else:
+            data = []
+
+        # Получаем текущую БД пользователя
+        user_id = context._user_id if hasattr(context, '_user_id') else None
+        db_name = database_manager.get_user_database(user_id) if user_id else 'ITINVENT'
+
+        # Получаем данные о ПК
+        equipment = context.user_data.get('pc_cleaning_equipment', {})
+
+        # Создаем запись
+        record = {
+            'serial_no': context.user_data.get('pc_cleaning_serial_no', ''),
+            'hw_serial_no': equipment.get('HW_SERIAL_NO', ''),
+            'model_name': equipment.get('MODEL_NAME', ''),
+            'manufacturer': equipment.get('MANUFACTURER', ''),
+            'branch': equipment.get('BRANCH_NAME', ''),
+            'location': equipment.get('LOCATION', ''),
+            'employee': equipment.get('EMPLOYEE_NAME', ''),
+            'inv_no': equipment.get('INV_NO', ''),
+            'db_name': db_name,
+            'timestamp': datetime.now().isoformat()
+        }
+
+        data.append(record)
+
+        # Сохраняем
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"Сохранена чистка ПК: {record}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Ошибка сохранения чистки ПК: {e}")
+        return False
+
+
 def clear_work_data(context: ContextTypes.DEFAULT_TYPE):
     """
     Очищает временные данные работы
@@ -1282,7 +1560,8 @@ def clear_work_data(context: ContextTypes.DEFAULT_TYPE):
         'pending_work_printer_model', 'work_printer_model_suggestions',
         'pending_work_equipment_type', 'work_equipment_type_suggestions',
         'pending_work_equipment_model', 'work_equipment_model_suggestions',
-        'battery_serial_no', 'battery_equipment'
+        'battery_serial_no', 'battery_equipment',
+        'pc_cleaning_serial_no', 'pc_cleaning_equipment'
     ]
     
     for key in keys_to_clear:

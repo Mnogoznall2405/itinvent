@@ -42,6 +42,7 @@ async def show_export_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         [InlineKeyboardButton("🔄 Экспорт перемещений", callback_data="export_type:transfers")],
         [InlineKeyboardButton("🔧 Экспорт замен комплектующих", callback_data="export_type:cartridges")],
         [InlineKeyboardButton("🔋 Экспорт замены батареи ИБП", callback_data="export_type:battery")],
+        [InlineKeyboardButton("🖥️ Экспорт чистки ПК", callback_data="export_type:pc_cleaning")],
         [InlineKeyboardButton("🔙 Назад в главное меню", callback_data="back_to_main")]
     ]
 
@@ -107,8 +108,8 @@ async def show_export_period(update: Update, context: ContextTypes.DEFAULT_TYPE)
     export_type = context.user_data.get('export_type', 'unfound')
 
     # Разные клавиатуры для разных типов экспорта
-    if export_type in ('cartridges', 'battery'):
-        # Для картриджей и батареи - выбор периода без выбора базы
+    if export_type in ('cartridges', 'battery', 'pc_cleaning'):
+        # Для картриджей, батареи и чистки ПК - выбор периода без выбора базы
         keyboard = [
             [InlineKeyboardButton("📅 За последний месяц", callback_data="export_period:1month")],
             [InlineKeyboardButton("📊 За последние 3 месяца", callback_data="export_period:3months")],
@@ -129,7 +130,8 @@ async def show_export_period(update: Update, context: ContextTypes.DEFAULT_TYPE)
         'unfound': 'ненайденного оборудования',
         'transfers': 'перемещений',
         'cartridges': 'замен комплектующих',
-        'battery': 'замен батареи ИБП'
+        'battery': 'замен батареи ИБП',
+        'pc_cleaning': 'чистки ПК'
     }
     type_name = type_names.get(export_type, 'данных')
 
@@ -138,6 +140,8 @@ async def show_export_period(update: Update, context: ContextTypes.DEFAULT_TYPE)
         period_text = "Выберите период для анализа картриджей:"
     elif export_type == 'battery':
         period_text = "Выберите период для анализа замен батареи:"
+    elif export_type == 'pc_cleaning':
+        period_text = "Выберите период для анализа чисток ПК:"
 
     await update.callback_query.edit_message_text(
         f"📊 <b>Экспорт {type_name}</b>\n\n"
@@ -171,11 +175,13 @@ async def handle_export_period(update: Update, context: ContextTypes.DEFAULT_TYP
         period = callback_data.split(":")[1]
         context.user_data['export_period'] = period
 
-        # Для картриджей и батареи - прямой экспорт без выбора базы
+        # Для картриджей, батареи и чистки ПК - прямой экспорт без выбора базы
         if export_type == 'cartridges':
             return await handle_cartridge_export_directly(update, context, period)
         elif export_type == 'battery':
             return await handle_battery_export_directly(update, context, period)
+        elif export_type == 'pc_cleaning':
+            return await handle_pc_cleaning_export_directly(update, context, period)
         else:
             # Для остальных типов - показываем выбор базы данных
             return await show_export_database(update, context)
@@ -187,6 +193,7 @@ async def handle_export_period(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("🔄 Экспорт перемещений", callback_data="export_type:transfers")],
             [InlineKeyboardButton("🔧 Экспорт замен комплектующих", callback_data="export_type:cartridges")],
             [InlineKeyboardButton("🔋 Экспорт замены батареи ИБП", callback_data="export_type:battery")],
+            [InlineKeyboardButton("🖥️ Экспорт чистки ПК", callback_data="export_type:pc_cleaning")],
             [InlineKeyboardButton("🔙 Назад в главное меню", callback_data="back_to_main")]
         ]
 
@@ -688,6 +695,43 @@ async def handle_battery_export_directly(update: Update, context: ContextTypes.D
         return ConversationHandler.END
 
 
+@handle_errors
+async def handle_pc_cleaning_export_directly(update: Update, context: ContextTypes.DEFAULT_TYPE, period: str) -> int:
+    """
+    Обрабатывает прямой экспорт чистки ПК без выбора базы данных
+
+    Параметры:
+        update: Объект обновления от Telegram API
+        context: Контекст выполнения
+        period: Выбранный период
+
+    Возвращает:
+        int: Следующее состояние
+    """
+    query = update.callback_query
+    await query.edit_message_text("⏳ Анализ данных о чистках ПК...")
+
+    try:
+        # Выполняем экспорт с структурированием по филиалам
+        excel_file = await export_pc_cleaning_to_excel_structured(period=period, db_filter=None)
+
+        if excel_file and os.path.exists(excel_file):
+            context.user_data['export_file'] = excel_file
+            return await show_delivery_options(update, context, excel_file)
+        else:
+            await query.edit_message_text(
+                "❌ Нет данных для экспорта или ошибка создания файла."
+            )
+            return ConversationHandler.END
+
+    except Exception as e:
+        logger.error(f"Ошибка при экспорте чистки ПК: {e}")
+        await query.edit_message_text(
+            f"❌ Ошибка при экспорте: {str(e)}"
+        )
+        return ConversationHandler.END
+
+
 async def export_battery_to_excel_structured(period: str = "all", db_filter: str = None) -> str:
     """
     Экспорт замен батареи ИБП в Excel с разделением по филиалам
@@ -858,6 +902,181 @@ async def export_battery_to_excel_structured(period: str = "all", db_filter: str
 
     except Exception as e:
         logger.error(f"Ошибка экспорта замены батареи ИБП: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+async def export_pc_cleaning_to_excel_structured(period: str = "all", db_filter: str = None) -> str:
+    """
+    Экспорт чисток ПК в Excel с разделением по филиалам
+
+    Параметры:
+        period: Период экспорта (1month, 3months, all)
+        db_filter: Фильтр по базе данных (None = все базы)
+
+    Возвращает:
+        str: Путь к созданному файлу
+    """
+    import json
+    import pandas as pd
+    from pathlib import Path
+    from datetime import datetime
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill
+
+    try:
+        file_path = Path("data/pc_cleanings.json")
+
+        if not file_path.exists():
+            return None
+
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        if not data:
+            return None
+
+        # Фильтруем по БД если указан фильтр
+        if db_filter:
+            data = [item for item in data if item.get('db_name') == db_filter]
+
+        if not data:
+            return None
+
+        # Фильтруем по периоду и получаем даты
+        filtered_data, start_date, end_date = filter_data_by_period(data, period)
+
+        if not filtered_data:
+            return None
+
+        # Создаем DataFrame с нужными полями
+        rows = []
+        logger.info(f"Обрабатываю {len(filtered_data)} записей о чистке ПК")
+
+        for item in filtered_data:
+            row = {
+                'Дата': item.get('timestamp', '').split('T')[0] if item.get('timestamp') else '',
+                'Время': item.get('timestamp', '').split('T')[1].split('.')[0] if item.get('timestamp') else '',
+                'Филиал': item.get('branch', ''),
+                'Локация': item.get('location', ''),
+                'Серийный номер': item.get('serial_no', ''),
+                'Модель ПК': item.get('model_name', ''),
+                'Производитель': item.get('manufacturer', ''),
+                'Сотрудник': item.get('employee', ''),
+                'Инв. номер': item.get('inv_no', ''),
+                'База данных': item.get('db_name', '')
+            }
+            rows.append(row)
+
+        # Создаем DataFrame
+        df = pd.DataFrame(rows)
+
+        # Порядок колонок (с филиалом для группировки)
+        df = df[['Дата', 'Время', 'Филиал', 'Локация', 'Серийный номер',
+                 'Модель ПК', 'Производитель', 'Сотрудник', 'Инв. номер', 'База данных']]
+
+        # Сортируем по дате (новые сверху)
+        df = df.sort_values('Дата', ascending=False)
+
+        # Создаем директорию
+        Path("exports").mkdir(exist_ok=True)
+
+        # Имя файла с датами
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+        if start_date and end_date:
+            date_range = f"{start_date.strftime('%d.%m.%Y')}-{end_date.strftime('%d.%m.%Y')}"
+        else:
+            date_range = "все_даты"
+
+        output_file = f"exports/чистки_пк_{date_range}_{timestamp}.xlsx"
+
+        # Создаем Excel с разными листами по филиалам
+        with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
+            # Получаем список уникальных филиалов
+            branches = df['Филиал'].unique()
+
+            # Создаем лист для каждого филиала
+            for branch in branches:
+                if pd.isna(branch):
+                    continue
+
+                branch_data = df[df['Филиал'] == branch].copy()
+                # Удаляем колонку Филиал, т.к. она уже в названии листа
+                branch_data = branch_data.drop('Филиал', axis=1)
+
+                # Имя листа (ограничение 31 символ)
+                sheet_name = str(branch)[:31]
+                branch_data.to_excel(writer, sheet_name=sheet_name, index=False)
+
+                # Форматируем лист
+                worksheet = writer.sheets[sheet_name]
+
+                # Заголовок листа
+                title_cell = worksheet.cell(row=1, column=11, value=f'ФИЛИАЛ: {branch}')
+                title_cell.font = Font(bold=True, size=12, color='FFFFFF')
+                title_cell.fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+                title_cell.alignment = Alignment(horizontal='center')
+
+                # Добавляем диапазон дат
+                date_cell = worksheet.cell(row=2, column=11, value=f'Период: {date_range}')
+                date_cell.font = Font(bold=True, size=10)
+                date_cell.fill = PatternFill(start_color='E2EFDA', end_color='E2EFDA', fill_type='solid')
+
+                # Ширина колонок
+                column_widths = {
+                    'A': 12,  # Дата
+                    'B': 10,  # Время
+                    'C': 20,  # Локация
+                    'D': 25,  # Серийный номер
+                    'E': 30,  # Модель ПК
+                    'F': 15,  # Производитель
+                    'G': 20,  # Сотрудник
+                    'H': 12,  # Инв. номер
+                    'I': 15,  # База данных
+                    'J': 5,   # Резерв
+                    'K': 30   # Для заголовка
+                }
+
+                for col, width in column_widths.items():
+                    if col in [cell.column_letter for cell in worksheet[1]]:
+                        worksheet.column_dimensions[col].width = width
+
+            # Создаем сводный лист со всеми данными
+            df_summary = df.drop('Филиал', axis=1)
+            df_summary.to_excel(writer, sheet_name='Сводка', index=False)
+
+            # Форматируем сводный лист
+            worksheet = writer.sheets['Сводка']
+
+            # Заголовок
+            title_cell = worksheet.cell(row=1, column=11, value='СВОДНЫЙ ОТЧЕТ ПО ЧИСТКАМ ПК')
+            title_cell.font = Font(bold=True, size=12, color='FFFFFF')
+            title_cell.fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+            title_cell.alignment = Alignment(horizontal='center')
+
+            # Диапазон дат
+            date_cell = worksheet.cell(row=2, column=11, value=f'Период: {date_range}')
+            date_cell.font = Font(bold=True, size=10)
+            date_cell.fill = PatternFill(start_color='E2EFDA', end_color='E2EFDA', fill_type='solid')
+
+            # Добавляем общую статистику
+            stats_row = len(df_summary) + 5
+            worksheet.cell(row=stats_row, column=1, value='СТАТИСТИКА').font = Font(bold=True)
+            worksheet.cell(row=stats_row + 1, column=1, value=f'Всего записей: {len(df_summary)}')
+            worksheet.cell(row=stats_row + 2, column=1, value=f'Филиалов: {len(branches)}')
+
+            # Ширина колонок для сводки
+            for col, width in column_widths.items():
+                if col in [cell.column_letter for cell in worksheet[1]]:
+                    worksheet.column_dimensions[col].width = width
+
+        logger.info(f"Создан отчет по чисткам ПК с разделением по филиалам: {output_file}")
+        return output_file
+
+    except Exception as e:
+        logger.error(f"Ошибка экспорта чисток ПК: {e}")
         import traceback
         traceback.print_exc()
         return None

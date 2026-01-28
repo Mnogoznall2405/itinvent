@@ -140,7 +140,10 @@ def register_handlers(application: Application) -> None:
         handle_work_model_suggestion,
         work_battery_serial_input,
         show_battery_confirmation,
-        save_battery_replacement
+        save_battery_replacement,
+        work_pc_cleaning_serial_input,
+        show_pc_cleaning_confirmation,
+        save_pc_cleaning
     )
     from bot.handlers.export import (
         show_export_menu,
@@ -446,6 +449,13 @@ def register_handlers(application: Application) -> None:
                 MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, work_battery_serial_input)
             ],
             States.WORK_BATTERY_CONFIRMATION: [
+                CallbackQueryHandler(handle_work_confirmation, pattern="^(confirm|cancel)_work$")
+            ],
+            States.WORK_PC_CLEANING_SERIAL_INPUT: [
+                MessageHandler(filters.PHOTO, work_pc_cleaning_serial_input),
+                MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, work_pc_cleaning_serial_input)
+            ],
+            States.WORK_PC_CLEANING_CONFIRMATION: [
                 CallbackQueryHandler(handle_work_confirmation, pattern="^(confirm|cancel)_work$")
             ],
             States.WORK_CONFIRMATION: [
