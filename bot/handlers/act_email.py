@@ -12,8 +12,11 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKe
 from telegram.ext import ContextTypes
 
 from bot.utils.decorators import handle_errors, require_user_access
-from database_manager import database_manager
-from email_sender import EmailSender
+from bot.database_manager import database_manager
+from bot.email_sender import EmailSender
+
+# Импортируем функцию безопасного удаления файлов
+from bot.services.pdf_generator import remove_file_with_retry, remove_word_temp_files
 
 logger = logging.getLogger(__name__)
 
@@ -129,22 +132,19 @@ async def handle_act_action_callback(update: Update, context: ContextTypes.DEFAU
         act_info = context.user_data.get('act_file_info')
 
         if data == 'act:skip':
-            # Удаляем все временные файлы
+            # Удаляем все временные файлы с механизмом повторных попыток
             if acts_info and acts_info.get('acts'):
                 for act in acts_info['acts']:
                     pdf_path = act.get('pdf_path')  # Исправлено: было 'path'
                     if pdf_path and os.path.exists(pdf_path):
-                        try:
-                            os.remove(pdf_path)
-                            logger.info(f"PDF акт удален: {pdf_path}")
-                        except Exception as e:
-                            logger.error(f"Ошибка удаления PDF акта при пропуске: {e}")
+                        remove_file_with_retry(pdf_path, max_attempts=3, delay=0.3)
+                        # Также удаляем временные файлы Word если это DOCX
+                        if pdf_path.endswith('.docx'):
+                            remove_word_temp_files(pdf_path)
             elif act_info and act_info.get('path') and os.path.exists(act_info['path']):
-                try:
-                    os.remove(act_info['path'])
-                    logger.info(f"PDF акт удален: {act_info['path']}")
-                except Exception as e:
-                    logger.error(f"Ошибка удаления PDF акта при пропуске: {e}")
+                remove_file_with_retry(act_info['path'], max_attempts=3, delay=0.3)
+                if act_info['path'].endswith('.docx'):
+                    remove_word_temp_files(act_info['path'])
             
             context.user_data.pop('act_files_info', None)
             context.user_data.pop('act_file_info', None)
@@ -288,15 +288,14 @@ async def handle_act_action_callback(update: Update, context: ContextTypes.DEFAU
                 for send in successful_sends:
                     result_text += f"  • {send['employee']} → {send['email']}\n"
                 
-                # Удаляем файлы после успешной отправки
+                # Удаляем файлы после успешной отправки с механизмом повторных попыток
                 for act in acts_list:
                     pdf_path = act.get('pdf_path')
                     if pdf_path and os.path.exists(pdf_path):
-                        try:
-                            os.remove(pdf_path)
-                            logger.info(f"PDF акт удален после отправки: {pdf_path}")
-                        except Exception as e:
-                            logger.error(f"Ошибка удаления файла акта: {e}")
+                        remove_file_with_retry(pdf_path, max_attempts=3, delay=0.3)
+                        # Удаляем временные файлы Word если это DOCX
+                        if pdf_path.endswith('.docx'):
+                            remove_word_temp_files(pdf_path)
                 
                 context.user_data.pop('act_files_info', None)
                 
@@ -531,11 +530,10 @@ async def handle_act_action_callback(update: Update, context: ContextTypes.DEFAU
                         await loading_message.edit_text(
                             f"✅ Акт {filename} успешно отправлен на {owner_email}!"
                         )
-                        try:
-                            os.remove(act_info['path'])
-                            logger.info(f"PDF акт удален после отправки: {act_info['path']}")
-                        except Exception as e:
-                            logger.error(f"Ошибка удаления файла акта: {e}")
+                        # Удаляем файл с механизмом повторных попыток
+                        remove_file_with_retry(act_info['path'], max_attempts=3, delay=0.3)
+                        if act_info['path'].endswith('.docx'):
+                            remove_word_temp_files(act_info['path'])
                         
                         context.user_data.pop('act_file_info', None)
                         from bot.handlers.start import return_to_main_menu
@@ -648,11 +646,9 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 for act in acts_info['acts']:
                     pdf_path = act.get('pdf_path')  # Исправлено: было 'path'
                     if pdf_path and os.path.exists(pdf_path):
-                        try:
-                            os.remove(pdf_path)
-                            logger.info(f"PDF акт удален после отправки: {pdf_path}")
-                        except Exception as e:
-                            logger.error(f"Ошибка удаления файла акта: {e}")
+                        remove_file_with_retry(pdf_path, max_attempts=3, delay=0.3)
+                        if pdf_path.endswith('.docx'):
+                            remove_word_temp_files(pdf_path)
                 
                 # Очищаем контекст
                 context.user_data.pop('waiting_for_email', None)
@@ -732,11 +728,10 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await loading_message.edit_text(
                 f"✅ Акт {filename} успешно отправлен на {email_text}!"
             )
-            try:
-                os.remove(email_file_info['path'])
-                logger.info(f"PDF акт удален после отправки: {email_file_info['path']}")
-            except Exception as e:
-                logger.error(f"Ошибка удаления файла акта: {e}")
+            # Удаляем файл с механизмом повторных попыток
+            remove_file_with_retry(email_file_info['path'], max_attempts=3, delay=0.3)
+            if email_file_info['path'].endswith('.docx'):
+                remove_word_temp_files(email_file_info['path'])
             
             context.user_data.pop('waiting_for_email', None)
             context.user_data.pop('email_file_info', None)

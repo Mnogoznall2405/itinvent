@@ -15,7 +15,7 @@ from bot.utils.decorators import require_user_access, handle_errors
 from bot.utils.formatters import format_equipment_info
 from bot.services.ocr_service import extract_serial_from_image
 from bot.services.validation import validate_serial_number
-from database_manager import database_manager
+from bot.database_manager import database_manager
 
 logger = logging.getLogger(__name__)
 
@@ -121,25 +121,9 @@ async def find_by_serial_input(update: Update, context: ContextTypes.DEFAULT_TYP
             )
             return ConversationHandler.END
         
-        # Поиск оборудования
+        # Поиск оборудования (автоматически пробует варианты O↔0)
         equipment = db.find_by_serial_number(serial_number)
-        
-        # Если не найдено, пробуем варианты с заменой O↔0
-        if not equipment:
-            from bot.services.ocr_service import generate_serial_variants
-            variants = generate_serial_variants(serial_number)
-            
-            # Пробуем каждый вариант (кроме оригинала, который уже проверили)
-            for variant in variants:
-                if variant != serial_number:
-                    logger.info(f"Пробуем вариант: {variant}")
-                    equipment = db.find_by_serial_number(variant)
-                    if equipment:
-                        logger.info(f"✅ Найдено по варианту: {variant} (оригинал: {serial_number})")
-                        # Обновляем serial_number для отображения
-                        serial_number = variant
-                        break
-        
+
         if equipment:
             # Форматируем и отправляем информацию
             info_text = f"✅ <b>Оборудование найдено!</b>\n\n{format_equipment_info(equipment)}"

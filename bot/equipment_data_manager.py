@@ -14,6 +14,8 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 import logging
 
+from bot.services.validation import validate_serial_number
+
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -110,34 +112,7 @@ class EquipmentDataManager:
             return False
         
         return True
-    
-    def validate_serial_number(self, serial: str) -> bool:
-        """
-        Валидация серийного номера.
-        
-        Args:
-            serial: Серийный номер
-            
-        Returns:
-            bool: True если серийный номер валиден
-        """
-        if not serial or not isinstance(serial, str):
-            return False
-        
-        # Удаляем лишние пробелы
-        serial = serial.strip()
-        
-        # Проверяем длину
-        if len(serial) < 1 or len(serial) > 50:
-            return False
-        
-        # Проверяем допустимые символы (буквы, цифры, дефис, подчеркивание, точка, пробел, двоеточие)
-        import re
-        if not re.match(r'^[a-zA-Z0-9_\-\. :]+$', serial):
-            return False
-        
-        return True
-    
+
     def validate_ip_address(self, ip: str) -> bool:
         """
         Валидация IP адреса.
@@ -175,9 +150,10 @@ class EquipmentDataManager:
         inv_num = inv_num.strip()
         if len(inv_num) < 1 or len(inv_num) > 30:
             return False
-        # Разрешаем буквы, цифры, дефис, подчёркивание, точку и ПРОБЕЛ
-        import re
-        if not re.match(r'^[a-zA-Z0-9._\- ]+$', inv_num):
+        # Убрана проверка на символы - разрешаем кириллицу и любые символы
+        # Проверяем только на опасные символы
+        dangerous_chars = ['<', '>', '"', "'", '&', ';', '|', '`', '\n', '\r']
+        if any(char in inv_num for char in dangerous_chars):
             return False
         return True
     
@@ -248,7 +224,7 @@ class EquipmentDataManager:
         """
         # Валидация входных данных
         cleaned_serial = self.extract_serial_value(serial_number)
-        if not self.validate_serial_number(cleaned_serial):
+        if not validate_serial_number(cleaned_serial):
             logger.error(f"Невалидный серийный номер: {serial_number}")
             return False
         
@@ -328,7 +304,7 @@ class EquipmentDataManager:
         """
         # Валидация входных данных
         cleaned_serial = self.extract_serial_value(serial_number)
-        if not self.validate_serial_number(cleaned_serial):
+        if not validate_serial_number(cleaned_serial):
             logger.error(f"Невалидный серийный номер: {serial_number}")
             return False
         

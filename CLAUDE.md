@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is **IT-invent Bot** - a Python-based Telegram bot for IT equipment inventory management with automatic serial number recognition and PDF document generation. The bot helps track IT equipment, generate transfer acts, and manage inventory across multiple databases.
+This is **IT-invent Bot** - a Python-based Telegram bot for IT equipment inventory management with automatic serial number recognition and PDF document generation. The bot helps track IT equipment, generate transfer acts, manage cartridge replacements, battery replacements, PC cleanings, and manage inventory across multiple databases.
 
-**Version:** 2.0.1 (modular architecture)
+**Version:** 2.2.0 (modular architecture with unified location handling)
 
 ## Common Development Commands
 
@@ -17,33 +17,26 @@ python -m bot.main
 
 # Alternative method
 python bot/main.py
-
-# Using batch scripts
-start_bot.bat              # Interactive start with error handling
-start_bot_minimized.bat    # Start minimized (Windows)
-start_bot_hidden.vbs       # Start completely hidden (Windows)
 ```
 
-### Testing and Development
+### Testing and Verification
 ```bash
-# Test OCR functionality (compares 7 models, time-intensive)
-test_ocr.bat
-
-# View recent logs
-view_logs.bat              # Shows last 50 lines of bot.log
-
-# Quick installation verification
-python -c "from docx import Document; print('OK')"
+# Quick import verification
 python -c "from bot.config import config; print('OK')"
+python -c "from bot.handlers import start; print('OK')"
+python -c "from docx import Document; print('OK')"
+
+# Test module imports
+python -m py_compile bot/handlers/location.py
 ```
 
 ### Log Management
 ```bash
-# View logs in real-time
-powershell Get-Content bot.log -Wait -Tail 50
+# View logs in real-time (PowerShell)
+Get-Content bot.log -Wait -Tail 50
 
 # View last 100 lines
-powershell Get-Content bot.log -Tail 100
+Get-Content bot.log -Tail 100
 ```
 
 ## Project Architecture
@@ -53,45 +46,122 @@ powershell Get-Content bot.log -Tail 100
 The project uses a **modular architecture** that separates concerns into distinct modules:
 
 ```
-bot/                     # Main bot package
-├── handlers/            # Command handlers (search, transfer, export, etc.)
-├── services/           # Business logic (OCR, PDF generation, validation)
-├── utils/              # Utilities (decorators, keyboards, formatters)
-├── config.py           # Centralized configuration
-└── main.py            # Entry point with handler registration
+bot/                          # Main bot package
+├── main.py                  # Entry point with handler registration
+├── config.py                # Centralized configuration (dataclasses)
+├── cache_manager.py         # User access caching
+├── database_manager.py      # Database connection management
+├── universal_database.py    # Universal DB interface
+├── email_sender.py          # Email notifications
+├── equipment_data_manager.py # Equipment data management
+├── handlers/                # Command handlers
+│   ├── location.py          # Universal location selection with pagination
+│   ├── suggestions_handler.py # Smart suggestions for employees/models
+│   ├── start.py             # /start, /help, /cancel
+│   ├── search.py            # Equipment search
+│   ├── employee.py          # Search by employee
+│   ├── transfer.py          # Equipment transfer with PDF
+│   ├── unfound.py           # Equipment not in DB
+│   ├── work.py              # Maintenance works (cartridge, battery, PC cleaning)
+│   ├── database.py          # Database management
+│   ├── export.py            # Data export
+│   └── act_email.py         # Email notifications
+├── services/                # Business logic
+│   ├── ocr_service.py       # OCR via OpenRouter API
+│   ├── pdf_generator.py     # PDF act generation
+│   ├── validation.py        # Input validation
+│   ├── excel_service.py     # Excel export (unified)
+│   ├── suggestions.py       # AI-powered suggestions
+│   ├── cartridge_database.py # Cartridge inventory
+│   └── printer_*_detector.py # Printer detection
+└── utils/                   # Utilities
+    ├── pagination.py        # PaginationHandler class (universal)
+    ├── decorators.py        # @require_user_access, @log_execution_time, @handle_errors
+    ├── keyboards.py         # Keyboard creation
+    ├── formatters.py        # Message formatting
+    └── maintenance.py       # Maintenance functions
 ```
 
-### Key Components
+### Key Architectural Patterns
 
-1. **Entry Point**: `bot/main.py` - Initializes bot, registers all handlers, manages logging with rotation
-2. **Configuration**: `bot/config.py` - Uses dataclasses for structured config loaded from `.env`
-3. **Database Layer**: `database_manager.py` + `universal_database.py` - Handles multiple database connections
-4. **Handler System**: Each major feature has its own handler in `bot/handlers/`
-5. **Services**: Business logic separated from handlers (OCR, PDF generation, etc.)
+#### 1. **Universal Pagination System** (`bot/utils/pagination.py`)
+- `PaginationHandler` class for unified pagination across all modules
+- Each mode has its own handler instance (unfound, transfer, work)
+- `handle_navigation()` for prev/next navigation
+- Used for: equipment search, employee lists, location selection
+
+#### 2. **Universal Location Selection** (`bot/handlers/location.py`)
+- Single source for location selection with pagination
+- Supports multiple modes: `unfound`, `transfer`, `work`
+- `show_location_buttons()` - shows all locations for a branch with pagination
+- `handle_location_navigation_universal()` - handles navigation for all modes
+- Import in other handlers: `from bot.handlers.location import show_location_buttons, handle_location_navigation_universal`
+
+#### 3. **Suggestions Pattern** (`bot/handlers/suggestions_handler.py`)
+- `show_employee_suggestions()` - employee name suggestions with filtering
+- `show_location_suggestions()` - location suggestions (legacy, being replaced)
+- `show_model_suggestions()` - model suggestions with database integration
+- `handle_employee_suggestion_generic()` - universal employee selection handler
+- Pattern: user types text → suggestions shown → user selects or types manually
+
+#### 4. **Handler Registration** (`bot/main.py`)
+- All handlers registered in `register_handlers()` function
+- ConversationHandler states defined in `bot/config.py` (States class)
+- CallbackQueryHandler patterns must match callback_data exactly
+- **Important**: Navigation buttons like `mode_location_prev` need pattern `^mode_location` (without colon)
+
+#### 5. **State Management**
+- ConversationHandler states in `States` class (config.py)
+- Temporary data stored in `context.user_data` during conversations
+- Persistent storage in JSON files (data/ directory)
+- Each feature has its own state keys (e.g., `work_branch`, `work_location`)
 
 ### Database Architecture
 
 - **Multi-database support**: Can work with multiple SQL Server databases via ODBC
-- **Database Manager**: Handles switching between databases, connection pooling
-- **JSON Data Storage**: Uses JSON files for temporary data, user preferences, and unfound equipment
-
-### State Management
-
-- **ConversationHandlers**: Uses python-telegram-bot's conversation states extensively
-- **User Context**: Stores temporary data in `context.user_data` during conversations
-- **Persistent Storage**: JSON files for equipment lists, transfers, cartridge replacements
+- **Database Manager** (`database_manager.py`): Handles switching between databases
+- **Universal DB** (`universal_database.py`): Consistent interface across databases
+- **JSON Data Storage**: For temporary data, user preferences, unfound equipment
 
 ## Key Features
 
-1. **Equipment Search**: Search by serial number (text/photo OCR) or by employee
-2. **OCR Integration**: Uses OpenRouter API with multiple models for serial number recognition
-3. **PDF Document Generation**: Creates transfer acts using DOCX templates converted to PDF
+1. **Equipment Search**: By serial number (text/photo OCR) or by employee
+2. **OCR Integration**: OpenRouter API with multiple models for serial recognition
+3. **PDF Document Generation**: Transfer acts using DOCX templates
 4. **Multi-Database Management**: Switch between different inventory databases
-5. **Export Functionality**: Export data to Excel/CSV with email delivery
-6. **Unfound Equipment**: Track equipment not in main database
-7. **Work Management**: Track maintenance and installation work
+5. **Export Functionality**: Excel/CSV export with email delivery
+6. **Cartridge Management**: Track replacements with LLM component detection
+7. **Battery Replacement**: Full UPS battery replacement cycle
+8. **PC Cleaning**: Track computer cleanings with history
+9. **Unfound Equipment**: Track equipment not in main database
+10. **Work Management**: Register maintenance works
 
 ## Development Guidelines
+
+### Adding New Location Selection
+
+Use the universal location system from `bot/handlers/location.py`:
+
+```python
+from bot.handlers.location import show_location_buttons
+
+# After branch selection, show locations
+user_id = update.effective_user.id
+context._user_id = user_id
+await show_location_buttons(
+    message=update.message,
+    context=context,
+    mode='your_mode',  # Add handler to location.py first
+    branch=branch
+)
+```
+
+To add a new mode to location handling:
+1. Add `PaginationHandler` instance in `location.py`
+2. Add to `_PAGINATION_HANDLERS` dictionary
+3. Add to `_NAVIGATION_RETURN_STATES` dictionary
+4. Update `show_location_buttons()` to handle the mode
+5. Create callback handler with pattern `^your_mode_location`
 
 ### Adding New Handlers
 
@@ -99,26 +169,36 @@ bot/                     # Main bot package
 2. Import utilities from `bot/utils/`
 3. Add to `bot/handlers/__init__.py`
 4. Register in `bot/main.py`'s `register_handlers()` function
-5. Add conversation states to `bot/config.py` if needed
-
-### Configuration
-
-All configuration is centralized in `bot/config.py` using dataclasses:
-- Environment variables loaded from `.env` file
-- Type validation on startup
-- Separated into logical groups (telegram, api, database, etc.)
+5. Add conversation states to `bot/config.py`
 
 ### Error Handling
 
-- Uses decorators `@require_user_access` and `@log_execution_time` from `bot/utils/decorators.py`
-- Logging with rotation (10MB, 5 backup files)
-- Graceful error handling with user-friendly messages
+Use decorators from `bot/utils/decorators.py`:
+- `@require_user_access` - checks user permissions
+- `@log_execution_time` - logs function execution time
+- `@handle_errors` - graceful error handling
 
-### Database Operations
+### Callback Handler Patterns
 
-- Use `database_manager.py` for database connections
-- Follow the `UniversalInventoryDB` pattern in `universal_database.py`
-- Always validate database names and SQL parameters to prevent injection
+**Critical**: Navigation button patterns must match callback_data exactly:
+- Buttons: `mode_location_prev`, `mode_location_next` (no colon after prefix)
+- Pattern: `^mode_location` (without colon requirement)
+- Selection buttons: `mode_location:0`, `mode_location:manual` (colon present)
+
+Example:
+```python
+# WRONG - won't catch navigation buttons
+CallbackQueryHandler(handler, pattern="^mode_location:")
+
+# CORRECT - catches all mode_location callbacks
+CallbackQueryHandler(handler, pattern="^mode_location")
+```
+
+### Code Reuse Principles
+
+- **DO**: Use existing universal functions from `location.py`, `pagination.py`, `suggestions_handler.py`
+- **DON'T**: Duplicate pagination, navigation, or location selection code
+- If you need similar functionality, extend the universal handlers
 
 ## Environment Setup
 
@@ -143,6 +223,11 @@ ITINVENT2_DATABASE=ITINVENT2
 # Optional: SMTP for email features
 SMTP_SERVER=your_smtp_server
 EMAIL_ADDRESS=bot@example.com
+EMAIL_PASSWORD=your_email_password
+
+# AI Models Configuration
+OCR_MODEL=qwen/qwen3-vl-8b-instruct
+CARTRIDGE_ANALYSIS_MODEL=anthropic/claude-3.5-sonnet
 ```
 
 ### Dependencies
@@ -156,18 +241,21 @@ Key dependencies (see `requirements.txt`):
 - `pandas>=2.0.0` - Data manipulation
 - `openpyxl>=3.1.0` - Excel export
 
-## Testing
-
-- OCR testing: Use `test_ocr.py` for comprehensive OCR model comparison
-- Function testing: Each handler can be tested individually via imports
-- Bot testing: Use `start_bot.bat` for interactive testing
-- Log monitoring: Use `view_logs.bat` to monitor bot activity
-
 ## File Structure Notes
 
 - `data/` - JSON files for equipment data, transfers, user preferences
 - `templates/` - DOCX templates for PDF document generation
 - `transfer_acts/` - Generated PDF transfer acts
 - `exports/` - Exported Excel/CSV files
-- `docs/` - Comprehensive documentation (in Russian)
-- `__pycache__/` - Python bytecode files (can be ignored)
+- `documentation/` - Complete documentation (in Russian)
+- `tests/` - Unit tests
+- `backups/` - JSON file backups
+- `archive/` - Archived files
+
+## Recent Architecture Changes (v2.2.0)
+
+- **Unified Location System**: Created `bot/handlers/location.py` for all location selection
+- **Universal Pagination**: `PaginationHandler` class replaces ~200 lines of duplicate code
+- **Work Management**: Added cartridge, battery, and PC cleaning tracking
+- **Excel Service Unification**: Single `ExcelService` class for all export operations
+- **Enhanced Detection**: LLM-powered printer component and color detection

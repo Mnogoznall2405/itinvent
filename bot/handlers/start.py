@@ -7,7 +7,7 @@
 """
 
 import logging
-from telegram import Update
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
 
 from bot.config import Messages
@@ -21,22 +21,22 @@ logger = logging.getLogger(__name__)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     Обработчик команды /start - отправляет приветственное сообщение
-    
+
     Создает главное меню бота с кнопками для выбора режима поиска.
     Сбрасывает все состояния пользователя и завершает все активные ConversationHandler.
-    
+
     Параметры:
         update: Объект обновления от Telegram API
         context: Контекст выполнения команды
-        
+
     Возвращает:
         int: ConversationHandler.END для сброса состояний
     """
     user_id = update.effective_user.id
-    
+
     # Логируем сброс состояния
     logger.info(f"Пользователь {user_id} вызвал /start - сброс всех состояний")
-    
+
     # Принудительно завершаем все ConversationHandler'ы
     from telegram.ext import ConversationHandler
 
@@ -47,7 +47,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if hasattr(context, '_conversations') and context._conversations:
         context._conversations.clear()
 
-    
     # Дополнительная очистка временных файлов
     import os
     import glob
@@ -62,17 +61,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             os.remove(temp_file)
         except:
             pass
-    
+
+    # Проверяем: есть ли пользователь в списке назначенных баз
+    from bot.database_manager import database_manager
+    assigned_db = database_manager.get_user_assigned_database(user_id)
+
+    # Если пользователя нет в базе и он не админ — показываем выбор базы
+    if not assigned_db and not database_manager.is_admin_user(user_id):
+        await show_database_selection(update, context, user_id)
+        return ConversationHandler.END
+
     # Получаем текущую БД пользователя
-    from database_manager import database_manager
     current_db = database_manager.get_user_database(user_id)
-    
+
     # Отправляем приветственное сообщение с главным меню
     welcome_text = (
         f"{Messages.MAIN_MENU}\n\n"
         f"📊 <b>Текущая база данных:</b> {current_db}"
     )
-    
+
     await update.message.reply_text(
         welcome_text,
         parse_mode='HTML',
@@ -81,6 +88,81 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     
     # Возвращаем END для завершения любых активных ConversationHandler
     return ConversationHandler.END
+
+
+async def show_database_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> None:
+    """
+    Показывает кнопки выбора базы данных для нового пользователя
+
+    Параметры:
+        update: Объект обновления от Telegram API
+        context: Контекст выполнения команды
+        user_id: ID пользователя Telegram
+    """
+    from bot.database_manager import database_manager
+
+    # Получаем список доступных баз
+    databases = database_manager.get_available_database_info()
+
+    keyboard = []
+    for db_info in databases:
+        keyboard.append([InlineKeyboardButton(
+            f"{db_info.display_name}",
+            callback_data=f"select_db:{db_info.name}"
+        )])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        "Добро пожаловать!\n\n"
+        "Выберите базу данных для работы:",
+        reply_markup=reply_markup
+    )
+    logger.info(f"Пользователю {user_id} показано меню выбора базы данных")
+
+
+@require_user_access
+async def handle_database_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Обработчик выбора базы данных для нового пользователя
+
+    Параметры:
+        update: Объект обновления от Telegram API
+        context: Контекст выполнения команды
+    """
+    from bot.database_manager import database_manager
+    import json
+
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+    data = query.data
+
+    if data.startswith('select_db:'):
+        db_name = data.split(':', 1)[1]
+
+        # Сохраняем выбор в user_db_selection.json
+        try:
+            with open(database_manager.user_selection_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            data = {}
+
+        data[str(user_id)] = db_name
+
+        with open(database_manager.user_selection_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        # Обновляем в памяти
+        database_manager.user_assigned_db[user_id] = db_name
+        database_manager.user_selected_db[user_id] = db_name
+
+        await query.edit_message_text(
+            f"✅ Выбрана база данных: {db_name}\n\n"
+            f"Теперь нажмите /start для начала работы"
+        )
+        logger.info(f"Пользователь {user_id} выбрал базу данных: {db_name}")
 
 
 @require_user_access
@@ -249,7 +331,7 @@ async def return_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         update: Объект обновления от Telegram API
         context: Контекст выполнения
     """
-    from database_manager import database_manager
+    from bot.database_manager import database_manager
     
     user_id = update.effective_user.id
     current_db = database_manager.get_user_database(user_id)

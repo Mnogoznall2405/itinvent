@@ -11,7 +11,7 @@ from logging.handlers import RotatingFileHandler
 import sys
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
 # Импорты из модулей бота
 from bot.config import config
@@ -19,7 +19,7 @@ from bot.handlers import start, help_command, cancel
 
 # Фильтр для исключения кнопок главного меню
 MAIN_MENU_BUTTONS_FILTER = (
-    filters.Regex("^🔎 Найти по серийному номеру$") |
+    filters.Regex("^🔎 Добавить или Найти$") |
     filters.Regex("^👤 Найти по сотруднику$") |
     filters.Regex("^🗄️ Управление базами данных$") |
     filters.Regex("^📦 Перемещение оборудования с актом$") |
@@ -99,11 +99,14 @@ def register_handlers(application: Application) -> None:
         handle_unfound_type_suggestion,
         handle_unfound_model_suggestion,
         handle_unfound_location_suggestion,
+        handle_unfound_location_button_suggestion,
         handle_unfound_status_suggestion,
         handle_unfound_branch_suggestion,
         handle_edit_unfound,
         handle_edit_field,
-        handle_back_to_confirmation
+        handle_back_to_confirmation,
+        handle_create_new_employee,
+        handle_retry_employee_input
     )
     from bot.handlers.transfer import (
         start_transfer,
@@ -135,6 +138,7 @@ def register_handlers(application: Application) -> None:
         handle_cartridge_color,
         handle_component_selection,
         handle_work_confirmation,
+        handle_work_success_action,
         handle_work_branch_suggestion,
         handle_work_location_suggestion,
         handle_work_model_suggestion,
@@ -143,7 +147,11 @@ def register_handlers(application: Application) -> None:
         save_battery_replacement,
         work_pc_cleaning_serial_input,
         show_pc_cleaning_confirmation,
-        save_pc_cleaning
+        save_pc_cleaning,
+        work_component_serial_input,
+        show_component_selection_pc,
+        handle_pc_component_selection,
+        save_component_replacement_pc
     )
     from bot.handlers.export import (
         show_export_menu,
@@ -164,7 +172,7 @@ def register_handlers(application: Application) -> None:
     # ConversationHandler для поиска по серийному номеру
     search_conv_handler = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.Regex("^🔎 Найти по серийному номеру$"), ask_find_equipment),
+            MessageHandler(filters.Regex("^🔎 Добавить или Найти$"), ask_find_equipment),
             CallbackQueryHandler(handle_search_again, pattern="^search_again$")
         ],
         states={
@@ -227,6 +235,10 @@ def register_handlers(application: Application) -> None:
                 CallbackQueryHandler(handle_unfound_employee_suggestion, pattern="^unfound_emp:"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, unfound_employee_input)
             ],
+            States.UNFOUND_EMPLOYEE_CONFIRMATION: [
+                CallbackQueryHandler(handle_create_new_employee, pattern="^create_new_employee$"),
+                CallbackQueryHandler(handle_retry_employee_input, pattern="^retry_employee_input$")
+            ],
             States.UNFOUND_TYPE_INPUT: [
                 CallbackQueryHandler(handle_unfound_type_suggestion, pattern="^unfound_type:"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, unfound_type_input)
@@ -249,11 +261,14 @@ def register_handlers(application: Application) -> None:
             ],
             States.UNFOUND_LOCATION_INPUT: [
                 CallbackQueryHandler(handle_unfound_location_suggestion, pattern="^unfound_loc:"),
+                CallbackQueryHandler(handle_unfound_location_button_suggestion, pattern="^unfound_location:"),
+                CallbackQueryHandler(handle_unfound_location_button_suggestion, pattern="^unfound_location_(prev|next|page_info)$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, unfound_location_input),
                 CallbackQueryHandler(handle_skip_callback, pattern="^skip_location$")
             ],
             States.UNFOUND_STATUS_INPUT: [
                 CallbackQueryHandler(handle_unfound_status_suggestion, pattern="^unfound_status:"),
+                CallbackQueryHandler(handle_unfound_status_suggestion, pattern="^unfound_status_(prev|next|page_info)$"),
                 CallbackQueryHandler(handle_skip_callback, pattern="^skip_status$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, unfound_status_input)
             ],
@@ -324,7 +339,7 @@ def register_handlers(application: Application) -> None:
                 MessageHandler(filters.PHOTO, receive_transfer_photos)
             ],
             States.TRANSFER_NEW_EMPLOYEE: [
-                CallbackQueryHandler(handle_employee_suggestion_callback, pattern="^transfer_emp:"),
+                CallbackQueryHandler(handle_employee_suggestion_callback, pattern="^transfer_emp"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, receive_new_employee)
             ],
             States.TRANSFER_NEW_BRANCH: [
@@ -332,7 +347,7 @@ def register_handlers(application: Application) -> None:
                 MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, receive_transfer_branch)
             ],
             States.TRANSFER_NEW_LOCATION: [
-                CallbackQueryHandler(handle_transfer_location_callback, pattern="^transfer_location:"),
+                CallbackQueryHandler(handle_transfer_location_callback, pattern="^transfer_location"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, receive_transfer_location)
             ],
             States.TRANSFER_CONFIRMATION: [
@@ -430,15 +445,12 @@ def register_handlers(application: Application) -> None:
             ],
             States.WORK_LOCATION_INPUT: [
                 CallbackQueryHandler(handle_work_location_suggestion, pattern="^work_loc:"),
+                CallbackQueryHandler(handle_work_location_suggestion, pattern="^work_location"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, work_location_input)
             ],
             States.WORK_PRINTER_MODEL_INPUT: [
                 CallbackQueryHandler(handle_work_model_suggestion, pattern="^work_model:"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, work_printer_model_input)
-            ],
-            States.WORK_COMPONENT_SELECTION: [
-                CallbackQueryHandler(handle_component_selection, pattern="^component:"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, work_component_input)
             ],
             States.WORK_CARTRIDGE_COLOR_SELECTION: [
                 CallbackQueryHandler(handle_printer_type_selection, pattern="^printer_type:"),
@@ -458,8 +470,25 @@ def register_handlers(application: Application) -> None:
             States.WORK_PC_CLEANING_CONFIRMATION: [
                 CallbackQueryHandler(handle_work_confirmation, pattern="^(confirm|cancel)_work$")
             ],
+            States.WORK_COMPONENT_SERIAL_INPUT: [
+                MessageHandler(filters.PHOTO, work_component_serial_input),
+                MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, work_component_serial_input)
+            ],
+            States.WORK_COMPONENT_SELECTION: [
+                CallbackQueryHandler(handle_component_selection, pattern="^component:"),
+                CallbackQueryHandler(handle_component_selection, pattern="^cartridge_model:"),
+                CallbackQueryHandler(handle_pc_component_selection, pattern="^pc_component:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, work_component_input)
+            ],
+            States.WORK_COMPONENT_CONFIRMATION: [
+                CallbackQueryHandler(handle_work_confirmation, pattern="^(confirm|cancel)_work$")
+            ],
             States.WORK_CONFIRMATION: [
                 CallbackQueryHandler(handle_work_confirmation, pattern="^(confirm|cancel)_work$")
+            ],
+            States.WORK_SUCCESS: [
+                CallbackQueryHandler(handle_work_success_action, pattern="^work:(pc_cleaning|battery_replacement|component_replacement|cartridge)$"),
+                CallbackQueryHandler(handle_work_success_action, pattern="^back_to_main$")
             ]
         },
         fallbacks=[
@@ -485,7 +514,20 @@ def register_handlers(application: Application) -> None:
     application.add_handler(database_conv_handler)
     application.add_handler(export_conv_handler)
     application.add_handler(work_conv_handler)
-    
+
+    # Обработчики для повторного запуска работ (кнопка "Обработать ещё")
+    from bot.handlers.work import handle_restart_work, handle_back_to_main_external
+    application.add_handler(CallbackQueryHandler(
+        handle_restart_work,
+        pattern="^work:(pc_cleaning|battery_replacement|component_replacement|cartridge)$"
+    ))
+
+    # Обработчик для кнопки "Главное меню" (вызывается извне ConversationHandler)
+    application.add_handler(CallbackQueryHandler(
+        handle_back_to_main_external,
+        pattern="^back_to_main$"
+    ))
+
     # Обработчики для отправки актов на email (после ConversationHandler'ов)
     application.add_handler(CallbackQueryHandler(
         handle_act_action_callback, 
@@ -503,7 +545,11 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("cancel", cancel))
 
-    logger.info("Обработчики зарегистрированы: start, help, cancel, search, employee, unfound, transfer, database, export, act_email")
+    # Выбор базы данных для новых пользователей
+    from bot.handlers.start import handle_database_selection
+    application.add_handler(CallbackQueryHandler(handle_database_selection, pattern="^select_db:"))
+
+    logger.info("Обработчики зарегистрированы: start, help, cancel, search, employee, unfound, transfer, database, export, act_email, db_selection")
 
 
 def main() -> None:
@@ -511,8 +557,12 @@ def main() -> None:
     logger.info("=" * 50)
     logger.info("Запуск IT-invent Bot v2.0 (модульная архитектура)")
     logger.info("=" * 50)
-    
+
     try:
+        # Запускаем фоновые задачи обслуживания
+        from bot.utils.maintenance import start_maintenance
+        start_maintenance()
+
         # Создаем Application с увеличенным таймаутом
         from telegram.request import BaseRequest
         application = (
@@ -541,6 +591,9 @@ def main() -> None:
         logger.error(f"Критическая ошибка при запуске бота: {e}", exc_info=True)
         sys.exit(1)
     finally:
+        # Останавливаем задачи обслуживания
+        from bot.utils.maintenance import stop_maintenance
+        stop_maintenance()
         logger.info("Бот остановлен")
 
 

@@ -14,7 +14,7 @@ from typing import Callable, Any
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 
-from cache_manager import user_access_cache
+from bot.cache_manager import user_access_cache
 
 logger = logging.getLogger(__name__)
 

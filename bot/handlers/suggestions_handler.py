@@ -358,8 +358,8 @@ async def show_location_suggestions(
     suggestions_key: str
 ) -> bool:
     """
-    Показывает подсказки для локации
-    
+    Показывает подсказки для локации с фильтрацией по выбранному филиалу
+
     Параметры:
         update: Объект обновления от Telegram API
         context: Контекст выполнения
@@ -367,23 +367,26 @@ async def show_location_suggestions(
         mode: Режим работы
         pending_key: Ключ для временного хранения
         suggestions_key: Ключ для хранения подсказок
-        
+
     Возвращает:
         bool: True если подсказки показаны
     """
     from bot.services.suggestions import get_location_suggestions
     from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-    
+
     context.user_data[pending_key] = location
-    
+
+    # Проверяем, был ли выбран филиал
+    branch = context.user_data.get('unfound_branch') or context.user_data.get('work_branch') or context.user_data.get('transfer_branch')
+
     if len(location) >= 2:
         try:
             user_id = update.effective_user.id
-            suggestions = get_location_suggestions(location, user_id)
-            
+            suggestions = get_location_suggestions(location, user_id, branch=branch)
+
             if suggestions:
                 context.user_data[suggestions_key] = suggestions
-                
+
                 # Создаем клавиатуру
                 keyboard = []
                 for idx, loc in enumerate(suggestions):
@@ -391,21 +394,24 @@ async def show_location_suggestions(
                         f"📍 {loc}",
                         callback_data=f"{mode}_loc:{idx}"
                     )])
-                
+
                 keyboard.append([InlineKeyboardButton(
                     "⌨️ Ввести как есть",
                     callback_data=f"{mode}_loc:manual"
                 )])
-                
+
                 reply_markup = InlineKeyboardMarkup(keyboard)
+
+                # Добавляем информацию о филиале в сообщение
+                branch_info = f" (филиал: {branch})" if branch else ""
                 await update.message.reply_text(
-                    "🔎 Найдены совпадения по локациям. Выберите из списка или нажмите 'Ввести как есть'.",
+                    f"🔎 Найдены совпадения по локациям{branch_info}. Выберите из списка или нажмите 'Ввести как есть'.",
                     reply_markup=reply_markup
                 )
                 return True
         except Exception as e:
             logger.error(f"Ошибка при получении подсказок локаций ({mode}): {e}")
-    
+
     return False
 
 
@@ -777,7 +783,7 @@ async def show_transfer_location_suggestions(
     suggestions_key: str
 ) -> bool:
     """
-    Показывает подсказки для локации при переносе оборудования
+    Показывает подсказки для локации при переносе оборудования с фильтрацией по филиалу
 
     Параметры:
         update: Объект обновления от Telegram API
@@ -790,17 +796,21 @@ async def show_transfer_location_suggestions(
         bool: True если подсказки показаны, False если нет
     """
     from bot.services.suggestions import get_location_suggestions
+    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 
     logger.info(f"[TRANSFER_LOCATION] Введена локация: '{location}'")
 
     # Сохраняем для подсказок
     context.user_data[pending_key] = location
 
+    # Получаем выбранный филиал
+    branch = context.user_data.get('transfer_branch')
+
     # Показываем подсказки если введено 2+ символов
     if len(location) >= 2:
         try:
             user_id = update.effective_user.id
-            suggestions = get_location_suggestions(location, user_id)
+            suggestions = get_location_suggestions(location, user_id, branch=branch)
 
             if suggestions:
                 context.user_data[suggestions_key] = suggestions
@@ -819,8 +829,11 @@ async def show_transfer_location_suggestions(
                 )])
 
                 reply_markup = InlineKeyboardMarkup(keyboard)
+
+                # Добавляем информацию о филиале
+                branch_info = f" (филиал: {branch})" if branch else ""
                 await update.message.reply_text(
-                    "🔎 Найдены совпадения по локациям. Выберите из списка или нажмите 'Ввести как есть'.",
+                    f"🔎 Найдены совпадения по локациям{branch_info}. Выберите из списка или нажмите 'Ввести как есть'.",
                     reply_markup=reply_markup
                 )
                 return True

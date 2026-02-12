@@ -103,72 +103,42 @@ If not found:
 def validate_serial_format(serial: str) -> bool:
     """
     Проверяет, похож ли номер на серийный номер
-    
+
     Параметры:
         serial: Строка для проверки
-        
+
     Возвращает:
         bool: True если похож на серийный номер
     """
     if not serial or len(serial) < 5:
         return False
-    
+
     # Проверка максимальной длины (Dell Service Tag может быть до 35 символов)
     if len(serial) > 40:
         logger.info(f"Отклонено: слишком длинный (>{40}): {serial}")
         return False
-    
+
     # Проверка на MAC-адрес (XX:XX:XX:XX:XX:XX или XX-XX-XX-XX-XX-XX)
     if re.match(r'^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$', serial):
         logger.info(f"Отклонено как MAC-адрес: {serial}")
         return False
-    
-    # Проверка на IMEI (15 цифр подряд)
-    if re.match(r'^\d{15}$', serial):
-        logger.info(f"Отклонено как IMEI: {serial}")
-        return False
-    
-    # Проверка на штрих-код (только цифры, очень длинный)
-    if re.match(r'^\d{13,}$', serial):
-        logger.info(f"Отклонено как штрих-код: {serial}")
-        return False
-    
-    # Серийный номер должен содержать хотя бы одну букву И одну цифру
-    has_letter = bool(re.search(r'[A-Za-z]', serial))
-    has_digit = bool(re.search(r'\d', serial))
-    
-    if not (has_letter and has_digit):
-        # Исключение: некоторые серийные номера могут быть только буквами или только цифрами
-        # но тогда они должны быть достаточно длинными (8+ символов для букв, 10+ для цифр)
-        if not has_letter and len(serial) < 10:
-            # Только цифры - должно быть минимум 10 символов
-            logger.info(f"Отклонено: только цифры и слишком короткий: {serial}")
-            return False
-        if not has_digit and len(serial) < 8:
-            # Только буквы - должно быть минимум 8 символов
-            logger.info(f"Отклонено: только буквы и слишком короткий: {serial}")
-            return False
-    
-    # Серийные номера обычно длиннее 6 символов
-    # Очень короткие номера (менее 6 символов) часто являются моделями или кодами
-    if len(serial) < 6:
-        logger.info(f"Отклонено: слишком короткий для серийного номера (возможно модель): {serial}")
-        return False
-    
+
+    # Убраны проверки на IMEI и штрих-код - сериальные номера могут быть чисто цифровыми и любой длины
+
     # Проверка на подозрительные паттерны
     suspicious_patterns = [
         r'^INV[-\s]?\d+',  # Инвентарный номер
         r'^PN[-\s]?',      # Part Number
         r'^P/N[-\s]?',     # Part Number
         r'^MODEL[-\s]?',   # Model
-        r'^[A-Z]{2}\d{3,4}[A-Z]{0,2}[-]?[A-Z]{1,3}$',  # Типичные модели: BV650I-GR, M404dn, G3411
     ]
-    
+
     for pattern in suspicious_patterns:
         if re.match(pattern, serial, re.IGNORECASE):
             logger.info(f"Отклонено по подозрительному паттерну (возможно модель): {serial}")
             return False
-    
+
+    # Принимаем всё остальное - пусть пользователь решает, верный ли номер
     return True
 
 

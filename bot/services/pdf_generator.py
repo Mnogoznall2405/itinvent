@@ -7,10 +7,68 @@ import logging
 import os
 import asyncio
 import time
+import gc
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def remove_file_with_retry(filepath: str, max_attempts: int = 5, delay: float = 0.5) -> bool:
+    """
+    Удаляет файл с механизмом повторных попыток при ошибке блокировки
+
+    Параметры:
+        filepath: Путь к удаляемому файлу
+        max_attempts: Максимальное количество попыток
+        delay: Задержка между попытками в секундах
+
+    Возвращает:
+        bool: True если файл удалён, False если все попытки неудачны
+    """
+    for attempt in range(max_attempts):
+        try:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+                logger.info(f"Файл удалён: {filepath}")
+                return True
+            else:
+                logger.debug(f"Файл уже不存在: {filepath}")
+                return True
+        except PermissionError as e:
+            logger.warning(f"Попытка {attempt + 1}/{max_attempts}: Файл занят {filepath} - {e}")
+            if attempt < max_attempts - 1:
+                time.sleep(delay * (attempt + 1))  # Увеличиваем задержку с каждой попыткой
+            else:
+                logger.error(f"Не удалось удалить файл после {max_attempts} попыток: {filepath}")
+                return False
+        except Exception as e:
+            logger.error(f"Ошибка удаления файла {filepath}: {e}")
+            return False
+    return False
+
+
+def remove_word_temp_files(docx_path: str) -> None:
+    """
+    Удаляет временные файлы Word, если они есть
+
+    Параметры:
+        docx_path: Путь к DOCX файлу
+    """
+    try:
+        directory, filename = os.path.split(docx_path)
+        # Word создаёт временные файлы с префиксом ~$
+        temp_file_pattern = f"~$ {filename}"
+        temp_file_path = os.path.join(directory, temp_file_pattern)
+
+        if os.path.exists(temp_file_path):
+            try:
+                os.remove(temp_file_path)
+                logger.info(f"Временный файл Word удалён: {temp_file_path}")
+            except Exception as e:
+                logger.debug(f"Не удалось удалить временный файл Word: {e}")
+    except Exception as e:
+        logger.debug(f"Ошибка при поиске временных файлов Word: {e}")
 
 
 async def generate_transfer_act_pdf(
@@ -149,14 +207,19 @@ async def generate_transfer_act_pdf(
         old_employee_sanitized = sanitize_filename(old_employee)
         docx_filename = f'transfer_act_{timestamp}_{old_employee_sanitized}.docx'
         docx_path = os.path.join(acts_dir, docx_filename)
+
+        # Сохраняем DOCX
         doc.save(docx_path)
-        
         logger.info(f"DOCX-акт создан: {docx_path}")
-        
+
+        # Освобождаем ресурсы перед конвертацией
+        del doc
+        gc.collect()
+
         # Конвертируем в PDF
         pdf_filename = f'transfer_act_{timestamp}_{old_employee_sanitized}.pdf'
         pdf_path = os.path.join(acts_dir, pdf_filename)
-        
+
         try:
             # Запускаем конвертацию в отдельном потоке с таймаутом
             loop = asyncio.get_event_loop()
@@ -169,10 +232,14 @@ async def generate_transfer_act_pdf(
 
             logger.info(f"PDF-акт создан: {pdf_path}")
 
-            # Удаляем временный DOCX
-            if os.path.exists(docx_path):
-                os.remove(docx_path)
-                logger.info(f"Временный DOCX удален: {docx_path}")
+            # Даём время Word освободить файл после конвертации
+            await asyncio.sleep(1.0)
+
+            # Удаляем временный DOCX с механизмом повторных попыток
+            remove_file_with_retry(docx_path, max_attempts=5, delay=0.5)
+
+            # Также удаляем временные файлы Word (~$*)
+            remove_word_temp_files(docx_path)
 
             return pdf_path
 

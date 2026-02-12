@@ -3,14 +3,160 @@
 """
 Обработчики для регистрации выполненных работ
 """
+import json
 import logging
+import os
+import re
+import traceback
 from datetime import datetime
+from pathlib import Path
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
-from bot.config import States
+
+from bot.config import States, Messages
 from bot.utils.decorators import handle_errors
+from bot.utils.keyboards import create_main_menu_keyboard
+from bot.handlers.suggestions_handler import (
+    show_branch_suggestions_for_work,
+    show_location_suggestions,
+    show_model_suggestions
+)
+from bot.handlers.location import (
+    show_location_buttons,
+    handle_location_navigation_universal
+)
+from bot.services.cartridge_database import cartridge_database
+from bot.services.enhanced_printer_detector import enhanced_detector
+from bot.services.ocr_service import (
+    extract_serial_from_image,
+    validate_serial_format
+)
+from bot.services.printer_component_detector import component_detector
+from bot.database_manager import database_manager
+from bot.universal_database import UniversalInventoryDB
 
 logger = logging.getLogger(__name__)
+
+
+async def handle_serial_input_with_ocr(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    temp_file_prefix: str,
+    user_data_serial_key: str,
+    user_data_equipment_key: str,
+    error_state: str,
+    equipment_type_name: str,
+    confirmation_handler: callable
+) -> int:
+    """
+    Универсальный обработчик ввода серийного номера с поддержкой OCR
+
+    Параметры:
+        update: Объект обновления от Telegram API
+        context: Контекст выполнения
+        temp_file_prefix: Префикс временного файла (например, "temp_battery_")
+        user_data_serial_key: Ключ для сохранения серийного номера в user_data
+        user_data_equipment_key: Ключ для сохранения оборудования в user_data
+        error_state: Состояние для возврата при ошибке
+        equipment_type_name: Название типа оборудования (например, "ИБП", "ПК")
+        confirmation_handler: Функция-обработчик подтверждения
+
+    Возвращает:
+        int: Следующее состояние
+    """
+    serial_number = None
+
+    # Обработка фотографии
+    if update.message.photo:
+        status_msg = await update.message.reply_text("🔍 Анализирую изображение...")
+
+        try:
+            photo = update.message.photo[-1]
+            file = await context.bot.get_file(photo.file_id)
+            file_path = f"{temp_file_prefix}{update.effective_user.id}.jpg"
+            await file.download_to_drive(file_path)
+
+            # Распознаем серийный номер
+            serial_number = await extract_serial_from_image(file_path)
+
+            # Удаляем временный файл
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+            try:
+                await status_msg.delete()
+            except:
+                pass
+
+        except Exception as e:
+            logger.error(f"Error processing photo: {e}")
+            await update.message.reply_text(
+                "❌ Не удалось распознать серийный номер.\n"
+                "Пожалуйста, введите его вручную:"
+            )
+            return error_state
+
+    # Обработка текстового ввода
+    elif update.message.text:
+        serial_number = update.message.text.strip()
+
+    if not serial_number:
+        await update.message.reply_text(
+            "❌ Серийный номер не указан.\n"
+            "Отправьте фото или введите серийный номер:"
+        )
+        return error_state
+
+    # Валидация формата
+    if not validate_serial_format(serial_number):
+        await update.message.reply_text(
+            f"⚠️ Неверный формат серийного номера: {serial_number}\n\n"
+            "Серийный номер должен содержать буквы и цифры.\n"
+            "Попробуйте еще раз:"
+        )
+        return error_state
+
+    # Сохраняем серийный номер
+    context.user_data[user_data_serial_key] = serial_number
+
+    # Поиск оборудования в базе данных
+    user_id = update.effective_user.id
+    db_name = database_manager.get_user_database(user_id)
+    config = database_manager.get_database_config(db_name)
+
+    if config:
+        db = UniversalInventoryDB(config)
+
+        # Поиск по серийному номеру (автоматически пробует варианты O↔0)
+        result = db.find_by_serial_number(serial_number)
+
+        # Проверяем тип результата - может быть список или одиночная запись
+        equipment = None
+        if isinstance(result, list):
+            if result and len(result) > 0:
+                equipment = result[0]
+        elif result is not None:
+            equipment = result
+
+        if equipment:
+            # Найдено оборудование - сохраняем данные
+            context.user_data[user_data_equipment_key] = equipment
+
+            # Показываем информацию для подтверждения
+            return await confirmation_handler(update, context, equipment)
+        else:
+            # Оборудование не найдено
+            await update.message.reply_text(
+                f"⚠️ {equipment_type_name} с серийным номером <b>{serial_number}</b> не найден в базе данных.\n\n"
+                f"📊 База: {db_name}\n\n"
+                "Проверьте серийный номер и попробуйте снова:",
+                parse_mode='HTML'
+            )
+            return error_state
+    else:
+        await update.message.reply_text("❌ Ошибка подключения к базе данных")
+        return ConversationHandler.END
 
 
 @handle_errors
@@ -23,7 +169,8 @@ async def start_work(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     keyboard = [
         [InlineKeyboardButton("🔧 Замена комплектующих МФУ", callback_data="work:cartridge")],
         [InlineKeyboardButton("🔋 Замена батареи ИБП", callback_data="work:battery_replacement")],
-        [InlineKeyboardButton("🖥️ Чистка ПК", callback_data="work:pc_cleaning")],
+        [InlineKeyboardButton("🖥️ Замена компонентов ПК", callback_data="work:component_replacement")],
+        [InlineKeyboardButton("🧹 Чистка ПК", callback_data="work:pc_cleaning")],
         [InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -58,25 +205,21 @@ async def handle_work_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     """
     query = update.callback_query
     await query.answer()
-    
+
     callback_data = query.data
-    
+
     logger.info(f"[WORK] Получен callback: {callback_data}, user_id={update.effective_user.id}")
-    
+
     # Обработка кнопки "Назад"
     if callback_data == 'back_to_main':
         logger.info(f"[WORK] Обработка кнопки 'Назад' - возврат в главное меню")
-        
-        from bot.config import Messages
-        from bot.utils.keyboards import create_main_menu_keyboard
-        from database_manager import database_manager
-        
+
         user_id = update.effective_user.id
         current_db = database_manager.get_user_database(user_id)
-        
+
         logger.info(f"[WORK] Отправка сообщения о возврате в главное меню")
         await query.edit_message_text("✅ Возврат в главное меню")
-        
+
         logger.info(f"[WORK] Отправка главного меню")
         await context.bot.send_message(
             chat_id=query.message.chat_id,
@@ -84,42 +227,127 @@ async def handle_work_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             parse_mode='HTML',
             reply_markup=create_main_menu_keyboard()
         )
-        
+
         logger.info(f"[WORK] Завершение ConversationHandler")
         return ConversationHandler.END
-    
+
     work_type = callback_data.split(':', 1)[1] if ':' in callback_data else ''
-    
+
     if work_type == 'cartridge':
         context.user_data['work_type'] = 'cartridge'
-        await query.edit_message_text(
+        message_text = (
             "🔧 <b>Замена комплектующих МФУ</b>\n\n"
-            "📍 Введите местоположение (филиал):",
-            parse_mode='HTML'
+            "📍 Введите местоположение (филиал):"
         )
+        await query.edit_message_text(message_text, parse_mode='HTML')
         return States.WORK_BRANCH_INPUT
 
     elif work_type == 'battery_replacement':
         context.user_data['work_type'] = 'battery_replacement'
-        await query.edit_message_text(
+        message_text = (
             "🔋 <b>Замена батареи ИБП</b>\n\n"
             "📷 Отправьте фото серийного номера\n"
-            "Или введите серийный номер ИБП:",
-            parse_mode='HTML'
+            "Или введите серийный номер ИБП:"
         )
+        await query.edit_message_text(message_text, parse_mode='HTML')
         return States.WORK_BATTERY_SERIAL_INPUT
+
+    elif work_type == 'component_replacement':
+        context.user_data['work_type'] = 'component_replacement'
+        message_text = (
+            "🖥️ <b>Замена компонентов ПК</b>\n\n"
+            "📷 Отправьте фото серийного номера\n"
+            "Или введите серийный номер ПК:"
+        )
+        await query.edit_message_text(message_text, parse_mode='HTML')
+        return States.WORK_COMPONENT_SERIAL_INPUT
 
     elif work_type == 'pc_cleaning':
         context.user_data['work_type'] = 'pc_cleaning'
-        await query.edit_message_text(
+        message_text = (
             "🖥️ <b>Чистка ПК</b>\n\n"
             "📷 Отправьте фото серийного номера\n"
-            "Или введите серийный номер ПК:",
-            parse_mode='HTML'
+            "Или введите серийный номер ПК:"
         )
+        await query.edit_message_text(message_text, parse_mode='HTML')
         return States.WORK_PC_CLEANING_SERIAL_INPUT
 
     return States.WORK_TYPE_SELECTION
+
+
+@handle_errors
+async def handle_back_to_main_external(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Обработчик для кнопки "Главное меню" - вызывается извне ConversationHandler
+    """
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+    current_db = database_manager.get_user_database(user_id)
+
+    logger.info(f"[WORK] Возврат в главное меню (внешний обработчик)")
+
+    await query.edit_message_text("✅ Возврат в главное меню")
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text=f"{Messages.MAIN_MENU}\n\n📊 <b>Текущая база данных:</b> {current_db}",
+        parse_mode='HTML',
+        reply_markup=create_main_menu_keyboard()
+    )
+
+
+@handle_errors
+async def handle_restart_work(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Обработчик для кнопки "Обработать ещё" - запускает новую работу после завершения предыдущей
+    Вызывается извне ConversationHandler
+    """
+    query = update.callback_query
+    await query.answer()
+
+    callback_data = query.data
+    work_type = callback_data.split(':', 1)[1] if ':' in callback_data else ''
+
+    logger.info(f"[WORK RESTART] Перезапуск работы: {work_type}")
+
+    # Очищаем старые данные
+    clear_work_data(context)
+
+    # Отправляем сообщение в зависимости от типа работы
+    if work_type == 'pc_cleaning':
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="🖥️ <b>Чистка ПК</b>\n\n📷 Отправьте фото серийного номера\nИли введите серийный номер ПК:",
+            parse_mode='HTML'
+        )
+    elif work_type == 'battery_replacement':
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="🔋 <b>Замена батареи ИБП</b>\n\n📷 Отправьте фото серийного номера\nИли введите серийный номер ИБП:",
+            parse_mode='HTML'
+        )
+    elif work_type == 'component_replacement':
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="🖥️ <b>Замена компонентов ПК</b>\n\n📷 Отправьте фото серийного номера\nИли введите серийный номер ПК:",
+            parse_mode='HTML'
+        )
+    elif work_type == 'cartridge':
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="🔧 <b>Замена комплектующих МФУ</b>\n\n📍 Введите местоположение (филиал):",
+            parse_mode='HTML'
+        )
+    else:
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="❌ Неизвестный тип работы"
+        )
+        return
+
+    # Устанавливаем work_type для последующих обработчиков
+    context.user_data['work_type'] = work_type
 
 
 @handle_errors
@@ -127,8 +355,6 @@ async def work_branch_input(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     """
     Обработчик ввода филиала с подсказками
     """
-    from bot.handlers.suggestions_handler import show_branch_suggestions_for_work
-
     branch = update.message.text.strip()
 
     # Показываем подсказки если есть совпадения
@@ -145,8 +371,14 @@ async def work_branch_input(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     context.user_data['work_branch'] = branch
 
-    await update.message.reply_text(
-        "📍 Введите локацию (например: Офис 301, Склад):"
+    # Показываем кнопки локаций для выбранного филиала
+    user_id = update.effective_user.id
+    context._user_id = user_id
+    await show_location_buttons(
+        message=update.message,
+        context=context,
+        mode='work',
+        branch=branch
     )
 
     return States.WORK_LOCATION_INPUT
@@ -157,8 +389,6 @@ async def work_location_input(update: Update, context: ContextTypes.DEFAULT_TYPE
     """
     Обработчик ввода локации с подсказками
     """
-    from bot.handlers.suggestions_handler import show_location_suggestions
-
     location = update.message.text.strip()
     work_type = context.user_data.get('work_type')
 
@@ -197,9 +427,6 @@ async def work_printer_model_input(update: Update, context: ContextTypes.DEFAULT
     """
     Обработчик ввода модели принтера с подсказками
     """
-    from bot.handlers.suggestions_handler import show_model_suggestions
-    from bot.services.enhanced_printer_detector import enhanced_detector
-
     model = update.message.text.strip()
 
     # Показываем подсказки если есть совпадения
@@ -226,7 +453,6 @@ async def work_printer_model_input(update: Update, context: ContextTypes.DEFAULT
 
     try:
         # Используем базу данных картриджей вместо LLM
-        from bot.services.cartridge_database import cartridge_database
 
         # Проверяем наличие принтера в базе данных картриджей
         compatibility = cartridge_database.find_printer_compatibility(model)
@@ -251,6 +477,9 @@ async def work_printer_model_input(update: Update, context: ContextTypes.DEFAULT
                 'oem_cartridge': compatibility.oem_cartridge,
                 'source': 'database'
             }
+
+            logger.info(f"[DEBUG] Model: {model}, components: {components_data['components']}")
+            logger.info(f"[DEBUG] compatibility.components: {compatibility.components}")
 
             source_text = f"\n🎯 Информация из базы данных картриджей"
             if compatibility.oem_cartridge:
@@ -342,8 +571,6 @@ async def show_cartridge_selection_with_models(update: Update, context: ContextT
     """
     Показывает меню выбора картриджей с конкретными моделями из базы данных
     """
-    from bot.services.enhanced_printer_detector import enhanced_detector
-
     model = context.user_data.get('work_printer_model', 'неизвестная модель')
     cartridges = context.user_data.get('printer_cartridges', [])
     is_color = context.user_data.get('printer_is_color', False)
@@ -404,8 +631,6 @@ async def show_component_selection(update: Update, context: ContextTypes.DEFAULT
     """
     Показывает меню выбора компонентов на основе детекции
     """
-    from bot.services.printer_component_detector import component_detector
-
     model = context.user_data.get('work_printer_model', 'неизвестная модель')
     is_color = components_data.get('color', False)
     available_components = components_data.get('component_list', [])
@@ -527,103 +752,16 @@ async def work_battery_serial_input(update: Update, context: ContextTypes.DEFAUL
     """
     Обработчик ввода серийного номера ИБП с поддержкой OCR
     """
-    from bot.services.ocr_service import extract_serial_from_image, validate_serial_format
-    import os
-    from database_manager import database_manager
-
-    serial_number = None
-
-    # Обработка фотографии
-    if update.message.photo:
-        status_msg = await update.message.reply_text("🔍 Анализирую изображение...")
-
-        try:
-            photo = update.message.photo[-1]
-            file = await context.bot.get_file(photo.file_id)
-            file_path = f"temp_battery_{update.effective_user.id}.jpg"
-            await file.download_to_drive(file_path)
-
-            # Распознаем серийный номер
-            serial_number = await extract_serial_from_image(file_path)
-
-            # Удаляем временный файл
-            if os.path.exists(file_path):
-                os.remove(file_path)
-
-            try:
-                await status_msg.delete()
-            except:
-                pass
-
-        except Exception as e:
-            logger.error(f"Error processing photo: {e}")
-            await update.message.reply_text(
-                "❌ Не удалось распознать серийный номер.\n"
-                "Пожалуйста, введите его вручную:"
-            )
-            return States.WORK_BATTERY_SERIAL_INPUT
-
-    # Обработка текстового ввода
-    elif update.message.text:
-        serial_number = update.message.text.strip()
-
-    if not serial_number:
-        await update.message.reply_text(
-            "❌ Серийный номер не указан.\n"
-            "Отправьте фото или введите серийный номер:"
-        )
-        return States.WORK_BATTERY_SERIAL_INPUT
-
-    # Валидация формата
-    if not validate_serial_format(serial_number):
-        await update.message.reply_text(
-            f"⚠️ Неверный формат серийного номера: {serial_number}\n\n"
-            "Серийный номер должен содержать буквы и цифры.\n"
-            "Попробуйте еще раз:"
-        )
-        return States.WORK_BATTERY_SERIAL_INPUT
-
-    # Сохраняем серийный номер
-    context.user_data['battery_serial_no'] = serial_number
-
-    # Поиск ИБП в базе данных
-    user_id = update.effective_user.id
-    db_name = database_manager.get_user_database(user_id)
-    config = database_manager.get_database_config(db_name)
-
-    if config:
-        from universal_database import UniversalInventoryDB
-        db = UniversalInventoryDB(config)
-
-        # Поиск по серийному номеру
-        result = db.find_by_serial_number(serial_number)
-
-        # Проверяем тип результата - может быть список или одиночная запись
-        equipment = None
-        if isinstance(result, list):
-            if result and len(result) > 0:
-                equipment = result[0]
-        elif result is not None:
-            equipment = result
-
-        if equipment:
-            # Найден ИБП - сохраняем данные
-            context.user_data['battery_equipment'] = equipment
-
-            # Показываем информацию для подтверждения
-            return await show_battery_confirmation(update, context, equipment)
-        else:
-            # ИБП не найден
-            await update.message.reply_text(
-                f"⚠️ ИБП с серийным номером <b>{serial_number}</b> не найден в базе данных.\n\n"
-                f"📊 База: {db_name}\n\n"
-                "Проверьте серийный номер и попробуйте снова:",
-                parse_mode='HTML'
-            )
-            return States.WORK_BATTERY_SERIAL_INPUT
-    else:
-        await update.message.reply_text("❌ Ошибка подключения к базе данных")
-        return ConversationHandler.END
+    return await handle_serial_input_with_ocr(
+        update=update,
+        context=context,
+        temp_file_prefix="temp_battery_",
+        user_data_serial_key="battery_serial_no",
+        user_data_equipment_key="battery_equipment",
+        error_state=States.WORK_BATTERY_SERIAL_INPUT,
+        equipment_type_name="ИБП",
+        confirmation_handler=show_battery_confirmation
+    )
 
 
 async def show_battery_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, equipment: dict) -> int:
@@ -679,113 +817,22 @@ async def work_pc_cleaning_serial_input(update: Update, context: ContextTypes.DE
     """
     Обработчик ввода серийного номера ПК с поддержкой OCR
     """
-    from bot.services.ocr_service import extract_serial_from_image, validate_serial_format
-    import os
-    from database_manager import database_manager
-
-    serial_number = None
-
-    # Обработка фотографии
-    if update.message.photo:
-        status_msg = await update.message.reply_text("🔍 Анализирую изображение...")
-
-        try:
-            photo = update.message.photo[-1]
-            file = await context.bot.get_file(photo.file_id)
-            file_path = f"temp_pc_cleaning_{update.effective_user.id}.jpg"
-            await file.download_to_drive(file_path)
-
-            # Распознаем серийный номер
-            serial_number = await extract_serial_from_image(file_path)
-
-            # Удаляем временный файл
-            if os.path.exists(file_path):
-                os.remove(file_path)
-
-            try:
-                await status_msg.delete()
-            except:
-                pass
-
-        except Exception as e:
-            logger.error(f"Error processing photo: {e}")
-            await update.message.reply_text(
-                "❌ Не удалось распознать серийный номер.\n"
-                "Пожалуйста, введите его вручную:"
-            )
-            return States.WORK_PC_CLEANING_SERIAL_INPUT
-
-    # Обработка текстового ввода
-    elif update.message.text:
-        serial_number = update.message.text.strip()
-
-    if not serial_number:
-        await update.message.reply_text(
-            "❌ Серийный номер не указан.\n"
-            "Отправьте фото или введите серийный номер:"
-        )
-        return States.WORK_PC_CLEANING_SERIAL_INPUT
-
-    # Валидация формата
-    if not validate_serial_format(serial_number):
-        await update.message.reply_text(
-            f"⚠️ Неверный формат серийного номера: {serial_number}\n\n"
-            "Серийный номер должен содержать буквы и цифры.\n"
-            "Попробуйте еще раз:"
-        )
-        return States.WORK_PC_CLEANING_SERIAL_INPUT
-
-    # Сохраняем серийный номер
-    context.user_data['pc_cleaning_serial_no'] = serial_number
-
-    # Поиск ПК в базе данных
-    user_id = update.effective_user.id
-    db_name = database_manager.get_user_database(user_id)
-    config = database_manager.get_database_config(db_name)
-
-    if config:
-        from universal_database import UniversalInventoryDB
-        db = UniversalInventoryDB(config)
-
-        # Поиск по серийному номеру
-        result = db.find_by_serial_number(serial_number)
-
-        # Проверяем тип результата - может быть список или одиночная запись
-        equipment = None
-        if isinstance(result, list):
-            if result and len(result) > 0:
-                equipment = result[0]
-        elif result is not None:
-            equipment = result
-
-        if equipment:
-            # Найден ПК - сохраняем данные
-            context.user_data['pc_cleaning_equipment'] = equipment
-
-            # Показываем информацию для подтверждения
-            return await show_pc_cleaning_confirmation(update, context, equipment)
-        else:
-            # ПК не найден
-            await update.message.reply_text(
-                f"⚠️ ПК с серийным номером <b>{serial_number}</b> не найден в базе данных.\n\n"
-                f"📊 База: {db_name}\n\n"
-                "Проверьте серийный номер и попробуйте снова:",
-                parse_mode='HTML'
-            )
-            return States.WORK_PC_CLEANING_SERIAL_INPUT
-    else:
-        await update.message.reply_text("❌ Ошибка подключения к базе данных")
-        return ConversationHandler.END
+    return await handle_serial_input_with_ocr(
+        update=update,
+        context=context,
+        temp_file_prefix="temp_pc_cleaning_",
+        user_data_serial_key="pc_cleaning_serial_no",
+        user_data_equipment_key="pc_cleaning_equipment",
+        error_state=States.WORK_PC_CLEANING_SERIAL_INPUT,
+        equipment_type_name="ПК",
+        confirmation_handler=show_pc_cleaning_confirmation
+    )
 
 
 async def show_pc_cleaning_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, equipment: dict) -> int:
     """
     Показывает подтверждение для чистки ПК с информацией о последней чистке
     """
-    import json
-    from pathlib import Path
-    from datetime import datetime
-
     serial_no = equipment.get('SERIAL_NO', 'N/A')
     hw_serial_no = equipment.get('HW_SERIAL_NO', '')
     model_name = equipment.get('MODEL_NAME', 'Неизвестная модель')
@@ -931,8 +978,6 @@ async def handle_component_selection_logic(update: Update, context: ContextTypes
     """
     Обрабатывает логику после выбора компонента
     """
-    from bot.services.printer_component_detector import component_detector
-
     model = context.user_data.get('work_printer_model', 'неизвестная модель')
     is_color = context.user_data.get('printer_is_color', False)
 
@@ -1001,8 +1046,6 @@ async def lookup_component_model(printer_model: str, component_type: str) -> str
         Модель компонента или пустая строка если не найдена
     """
     try:
-        from bot.services.cartridge_database import cartridge_database
-
         # Ищем совместимость принтера
         compatibility = cartridge_database.find_printer_compatibility(printer_model)
 
@@ -1149,7 +1192,6 @@ async def handle_cartridge_color(update: Update, context: ContextTypes.DEFAULT_T
     # Определяем модель картриджа для выбранного цвета
     cartridge_model = ''
     try:
-        from bot.services.cartridge_database import cartridge_database
         printer_model = context.user_data.get('work_printer_model', '')
         selected_color = color_names.get(color, color)
 
@@ -1200,8 +1242,6 @@ async def show_work_confirmation(update: Update, context: ContextTypes.DEFAULT_T
     """
     Показывает подтверждение для замены компонента
     """
-    from bot.services.printer_component_detector import component_detector
-
     branch = context.user_data.get('work_branch', '')
     location = context.user_data.get('work_location', '')
     printer_model = context.user_data.get('work_printer_model', '')
@@ -1316,59 +1356,183 @@ async def handle_work_confirmation(update: Update, context: ContextTypes.DEFAULT
     """
     query = update.callback_query
     await query.answer()
-    
+
     if query.data == "confirm_work":
         # Сохраняем user_id для функций сохранения
         context._user_id = update.effective_user.id
-        
+
         # Сохраняем данные
         work_type = context.user_data.get('work_type')
-        
+
         if work_type == 'cartridge':
             success = await save_component_replacement(context)
         elif work_type == 'battery_replacement':
             success = await save_battery_replacement(context)
         elif work_type == 'pc_cleaning':
             success = await save_pc_cleaning(context)
+        elif work_type == 'component_replacement':
+            success = await save_component_replacement_pc(context)
         else:
             success = False
             logger.error(f"Неизвестный тип работы: {work_type}")
-        
+
         if success:
+            # Получаем work_type до очистки данных
+            work_type = context.user_data.get('work_type', '')
+
+            # Создаем клавиатуру с кнопками
+            keyboard = []
+            if work_type == 'pc_cleaning':
+                keyboard.append([
+                    InlineKeyboardButton("🔄 Обработать еще", callback_data="work:pc_cleaning"),
+                    InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")
+                ])
+            elif work_type == 'battery_replacement':
+                keyboard.append([
+                    InlineKeyboardButton("🔄 Обработать еще", callback_data="work:battery_replacement"),
+                    InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")
+                ])
+            elif work_type == 'component_replacement':
+                keyboard.append([
+                    InlineKeyboardButton("🔄 Обработать еще", callback_data="work:component_replacement"),
+                    InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")
+                ])
+            elif work_type == 'cartridge':
+                keyboard.append([
+                    InlineKeyboardButton("🔄 Обработать еще", callback_data="work:cartridge"),
+                    InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")
+                ])
+            else:
+                keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")])
+
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
             await query.edit_message_text(
                 "✅ Данные успешно сохранены!\n"
-                "Информация о выполненной работе добавлена."
+                "Информация о выполненной работе добавлена.",
+                reply_markup=reply_markup
             )
+
+            # НЕ очищаем work_type - он нужен для кнопки "Обработать еще"
+            # Очищаем только данные оборудования
+            context.user_data.pop('battery_equipment', None)
+            context.user_data.pop('pc_cleaning_equipment', None)
+            context.user_data.pop('component_replacement_equipment', None)
+            context.user_data.pop('battery_serial_no', None)
+            context.user_data.pop('pc_cleaning_serial_no', None)
+            context.user_data.pop('component_replacement_serial_no', None)
+            context.user_data.pop('pc_component_type', None)
+            context.user_data.pop('pc_component_name', None)
+
+            # Переходим в состояние успеха - разговор остается активным
+            return States.WORK_SUCCESS
         else:
             await query.edit_message_text(
                 "❌ Ошибка при сохранении данных.\n"
                 "Попробуйте еще раз."
             )
-        
-        # Очищаем данные
-        clear_work_data(context)
-        
-        from telegram.ext import ConversationHandler
-        return ConversationHandler.END
-    
+            clear_work_data(context)
+            return ConversationHandler.END
+
     elif query.data == "cancel_work":
         await query.edit_message_text("❌ Операция отменена.")
         clear_work_data(context)
-        
-        from telegram.ext import ConversationHandler
+
         return ConversationHandler.END
-    
+
     return States.WORK_CONFIRMATION
+
+
+@handle_errors
+async def handle_work_success_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обработчик действий из состояния успеха (кнопки "Обработать еще" и "Главное меню")
+    """
+    query = update.callback_query
+    await query.answer()
+
+    callback_data = query.data
+
+    # Обработка кнопки "Назад в главное меню"
+    if callback_data == 'back_to_main':
+        user_id = update.effective_user.id
+        current_db = database_manager.get_user_database(user_id)
+
+        await query.edit_message_text("✅ Возврат в главное меню")
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=f"{Messages.MAIN_MENU}\n\n📊 <b>Текущая база данных:</b> {current_db}",
+            parse_mode='HTML',
+            reply_markup=create_main_menu_keyboard()
+        )
+
+        clear_work_data(context)
+        return ConversationHandler.END
+
+    # Обработка кнопки "Обработать еще"
+    if callback_data.startswith('work:'):
+        work_type = callback_data.split(':', 1)[1] if ':' in callback_data else ''
+
+        logger.info(f"[WORK SUCCESS] Перезапуск работы: {work_type}")
+
+        # Очищаем старые данные оборудования, но оставляем work_type
+        context.user_data.pop('battery_equipment', None)
+        context.user_data.pop('pc_cleaning_equipment', None)
+        context.user_data.pop('component_replacement_equipment', None)
+        context.user_data.pop('battery_serial_no', None)
+        context.user_data.pop('pc_cleaning_serial_no', None)
+        context.user_data.pop('component_replacement_serial_no', None)
+        context.user_data.pop('work_branch', None)
+        context.user_data.pop('work_location', None)
+        context.user_data.pop('work_printer_model', None)
+        context.user_data.pop('work_cartridge_color', None)
+        context.user_data.pop('work_component_type', None)
+        context.user_data.pop('pc_component_type', None)
+        context.user_data.pop('pc_component_name', None)
+
+        # Устанавливаем work_type
+        context.user_data['work_type'] = work_type
+
+        # Отправляем сообщение в зависимости от типа работы
+        if work_type == 'pc_cleaning':
+            await query.edit_message_text(
+                "🖥️ <b>Чистка ПК</b>\n\n"
+                "📷 Отправьте фото серийного номера\n"
+                "Или введите серийный номер ПК:",
+                parse_mode='HTML'
+            )
+            return States.WORK_PC_CLEANING_SERIAL_INPUT
+        elif work_type == 'battery_replacement':
+            await query.edit_message_text(
+                "🔋 <b>Замена батареи ИБП</b>\n\n"
+                "📷 Отправьте фото серийного номера\n"
+                "Или введите серийный номер ИБП:",
+                parse_mode='HTML'
+            )
+            return States.WORK_BATTERY_SERIAL_INPUT
+        elif work_type == 'component_replacement':
+            await query.edit_message_text(
+                "🖥️ <b>Замена компонентов ПК</b>\n\n"
+                "📷 Отправьте фото серийного номера\n"
+                "Или введите серийный номер ПК:",
+                parse_mode='HTML'
+            )
+            return States.WORK_COMPONENT_SERIAL_INPUT
+        elif work_type == 'cartridge':
+            await query.edit_message_text(
+                "🔧 <b>Замена комплектующих МФУ</b>\n\n"
+                "📍 Введите местоположение (филиал):",
+                parse_mode='HTML'
+            )
+            return States.WORK_BRANCH_INPUT
+
+    return States.WORK_SUCCESS
 
 
 async def save_component_replacement(context: ContextTypes.DEFAULT_TYPE) -> bool:
     """
     Сохраняет данные о замене компонента в JSON
     """
-    import json
-    from pathlib import Path
-    from database_manager import database_manager
-
     try:
         file_path = Path("data/cartridge_replacements.json")  # Оставляем старое имя файла для обратной совместимости
 
@@ -1443,12 +1607,8 @@ async def save_cartridge_replacement(context: ContextTypes.DEFAULT_TYPE) -> bool
 
 async def save_battery_replacement(context: ContextTypes.DEFAULT_TYPE) -> bool:
     """
-    Сохраняет данные о замене батареи ИБП в JSON
+    Сохраняет данные о замене батареи ИБП в JSON и обновляет описание в базе данных
     """
-    import json
-    from pathlib import Path
-    from database_manager import database_manager
-
     try:
         file_path = Path("data/battery_replacements.json")
 
@@ -1465,8 +1625,46 @@ async def save_battery_replacement(context: ContextTypes.DEFAULT_TYPE) -> bool:
 
         # Получаем данные об ИБП
         equipment = context.user_data.get('battery_equipment', {})
+        equipment_id = equipment.get('ID')
+        current_description = equipment.get('DESCRIPTION') or ''
 
-        # Создаем запись
+        # Формируем строку с датой замены батареи
+        replacement_date = datetime.now().strftime("%d.%m.%Y %H:%M")
+        replacement_note = f"\r\nПоследняя замена батареи: {replacement_date} (IT-BOT)"
+
+        # Обновляем описание в базе данных
+        if equipment_id:
+            config = database_manager.get_database_config(db_name)
+            if config:
+                db = UniversalInventoryDB(config)
+
+                # Проверяем, есть ли уже запись о замене батареи в описании
+                if "Последняя замена батареи:" in current_description:
+                    # Обновляем последнюю запись о замене
+                    new_description = re.sub(
+                        r'Последняя замена батареи:.*?\(IT-BOT\)',
+                        f'Последняя замена батареи: {replacement_date} (IT-BOT)',
+                        current_description
+                    )
+                else:
+                    # Добавляем новую запись к описанию
+                    new_description = current_description + replacement_note
+
+                # UPDATE в базе
+                try:
+                    with db._get_connection() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            UPDATE ITEMS
+                            SET DESCR = ?, CH_DATE = GETDATE(), CH_USER = 'IT-BOT'
+                            WHERE ID = ?
+                        """, (new_description, equipment_id))
+                        conn.commit()
+                        logger.info(f"Обновлено описание для ID={equipment_id}: добавлена замена батареи от {replacement_date}")
+                except Exception as e:
+                    logger.error(f"Ошибка обновления описания: {e}")
+
+        # Создаем запись для JSON
         record = {
             'serial_no': context.user_data.get('battery_serial_no', ''),
             'hw_serial_no': equipment.get('HW_SERIAL_NO', ''),
@@ -1482,7 +1680,7 @@ async def save_battery_replacement(context: ContextTypes.DEFAULT_TYPE) -> bool:
 
         data.append(record)
 
-        # Сохраняем
+        # Сохраняем JSON
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
@@ -1491,17 +1689,14 @@ async def save_battery_replacement(context: ContextTypes.DEFAULT_TYPE) -> bool:
 
     except Exception as e:
         logger.error(f"Ошибка сохранения замены батареи: {e}")
+        traceback.print_exc()
         return False
 
 
 async def save_pc_cleaning(context: ContextTypes.DEFAULT_TYPE) -> bool:
     """
-    Сохраняет данные о чистке ПК в JSON
+    Сохраняет данные о чистке ПК в JSON и обновляет описание в базе данных
     """
-    import json
-    from pathlib import Path
-    from database_manager import database_manager
-
     try:
         file_path = Path("data/pc_cleanings.json")
 
@@ -1518,8 +1713,47 @@ async def save_pc_cleaning(context: ContextTypes.DEFAULT_TYPE) -> bool:
 
         # Получаем данные о ПК
         equipment = context.user_data.get('pc_cleaning_equipment', {})
+        equipment_id = equipment.get('ID')
+        current_description = equipment.get('DESCRIPTION') or ''
 
-        # Создаем запись
+        # Формируем строку с датой чистки (используем \r\n для переноса строки в SQL Server)
+        cleaning_date = datetime.now().strftime("%d.%m.%Y %H:%M")
+        cleaning_note = f"\r\nПоследняя чистка: {cleaning_date} (IT-BOT)"
+
+        # Обновляем описание в базе данных
+        if equipment_id:
+            config = database_manager.get_database_config(db_name)
+            if config:
+                db = UniversalInventoryDB(config)
+
+                # Проверяем, есть ли уже запись о чистке в описании
+                if "Последняя чистка:" in current_description:
+                    # Обновляем последнюю запись о чистке
+                    # Заменяем последнюю запись о чистке на новую
+                    new_description = re.sub(
+                        r'Последняя чистка:.*?\(IT-BOT\)',
+                        f'Последняя чистка: {cleaning_date} (IT-BOT)',
+                        current_description
+                    )
+                else:
+                    # Добавляем новую запись к описанию
+                    new_description = current_description + cleaning_note
+
+                # UPDATE в базе
+                try:
+                    with db._get_connection() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            UPDATE ITEMS
+                            SET DESCR = ?, CH_DATE = GETDATE(), CH_USER = 'IT-BOT'
+                            WHERE ID = ?
+                        """, (new_description, equipment_id))
+                        conn.commit()
+                        logger.info(f"Обновлено описание для ID={equipment_id}: добавлена чистка от {cleaning_date}")
+                except Exception as e:
+                    logger.error(f"Ошибка обновления описания: {e}")
+
+        # Создаем запись для JSON
         record = {
             'serial_no': context.user_data.get('pc_cleaning_serial_no', ''),
             'hw_serial_no': equipment.get('HW_SERIAL_NO', ''),
@@ -1535,7 +1769,7 @@ async def save_pc_cleaning(context: ContextTypes.DEFAULT_TYPE) -> bool:
 
         data.append(record)
 
-        # Сохраняем
+        # Сохраняем JSON
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
@@ -1544,6 +1778,7 @@ async def save_pc_cleaning(context: ContextTypes.DEFAULT_TYPE) -> bool:
 
     except Exception as e:
         logger.error(f"Ошибка сохранения чистки ПК: {e}")
+        traceback.print_exc()
         return False
 
 
@@ -1561,7 +1796,9 @@ def clear_work_data(context: ContextTypes.DEFAULT_TYPE):
         'pending_work_equipment_type', 'work_equipment_type_suggestions',
         'pending_work_equipment_model', 'work_equipment_model_suggestions',
         'battery_serial_no', 'battery_equipment',
-        'pc_cleaning_serial_no', 'pc_cleaning_equipment'
+        'pc_cleaning_serial_no', 'pc_cleaning_equipment',
+        'component_replacement_serial_no', 'component_replacement_equipment',
+        'pc_component_type', 'pc_component_name'
     ]
     
     for key in keys_to_clear:
@@ -1576,16 +1813,25 @@ async def handle_work_branch_suggestion(update: Update, context: ContextTypes.DE
     """
     query = update.callback_query
     await query.answer()
-    
+
     data = query.data
-    
+
     if data == 'work_branch:manual':
         pending = context.user_data.get('pending_work_branch', '').strip()
         context.user_data['work_branch'] = pending
         await query.edit_message_text(f"✅ Принято: {pending}")
-        await query.message.reply_text("📍 Введите локацию:")
+
+        # Показываем кнопки локаций для выбранного филиала
+        context._user_id = query.from_user.id
+        await show_location_buttons(
+            message=query.message,
+            context=context,
+            mode='work',
+            branch=pending,
+            query=query
+        )
         return States.WORK_LOCATION_INPUT
-    
+
     elif data.startswith('work_branch:'):
         try:
             # Пропускаем обработку для refresh и manual
@@ -1601,45 +1847,82 @@ async def handle_work_branch_suggestion(update: Update, context: ContextTypes.DE
                     selected_branch = suggestions[idx]
                     context.user_data['work_branch'] = selected_branch
                     await query.edit_message_text(f"✅ Выбран филиал: {selected_branch}")
-                    await query.message.reply_text("📍 Введите локацию:")
+
+                    # Показываем кнопки локаций для выбранного филиала
+                    context._user_id = query.from_user.id
+                    await show_location_buttons(
+                        message=query.message,
+                        context=context,
+                        mode='work',
+                        branch=selected_branch,
+                        query=query
+                    )
                     return States.WORK_LOCATION_INPUT
         except (ValueError, IndexError) as e:
             logger.error(f"Ошибка обработки выбора филиала: {e}")
-    
+
     return States.WORK_BRANCH_INPUT
 
 
 @handle_errors
 async def handle_work_location_suggestion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
-    Обработчик выбора локации из подсказок
+    Обработчик выбора локации из подсказок с поддержкой пагинации
     """
     query = update.callback_query
     await query.answer()
-    
+
     data = query.data
     work_type = context.user_data.get('work_type')
-    
-    if data == 'work_loc:manual':
+
+    # Обработка пагинации через универсальный обработчик
+    if data in ('work_location_prev', 'work_location_next'):
+        return await handle_location_navigation_universal(update, context, mode='work') or States.WORK_LOCATION_INPUT
+
+    # Обработка "Ввести вручную"
+    if data == 'work_location:manual':
+        # Для работы через location.py нужно запросить ввод вручную
+        await query.edit_message_text("📍 Введите локацию:")
+        return States.WORK_LOCATION_INPUT
+
+    # Обработка выбора конкретной локации
+    elif data.startswith('work_location:'):
+        try:
+            idx = int(data.split(':', 1)[1])
+            from bot.handlers.location import _work_location_pagination_handler
+            suggestions = _work_location_pagination_handler.get_items(context)
+
+            if 0 <= idx < len(suggestions):
+                selected_location = suggestions[idx]
+                context.user_data['work_location'] = selected_location
+                await query.edit_message_text(f"✅ Выбрана локация: {selected_location}")
+
+                if work_type == 'cartridge':
+                    await query.message.reply_text("🖨️ Введите модель принтера:")
+                    return States.WORK_PRINTER_MODEL_INPUT
+                else:
+                    await query.message.reply_text("🔧 Введите тип оборудования:")
+                    return States.WORK_EQUIPMENT_TYPE_INPUT
+        except (ValueError, IndexError) as e:
+            logger.error(f"Ошибка обработки выбора локации: {e}")
+
+    # Обратная совместимость со старым форматом (work_loc:)
+    elif data == 'work_loc:manual':
         pending = context.user_data.get('pending_work_location', '').strip()
         context.user_data['work_location'] = pending
         await query.edit_message_text(f"✅ Принято: {pending}")
-        
+
         if work_type == 'cartridge':
             await query.message.reply_text("🖨️ Введите модель принтера:")
             return States.WORK_PRINTER_MODEL_INPUT
         else:
             await query.message.reply_text("🔧 Введите тип оборудования:")
             return States.WORK_EQUIPMENT_TYPE_INPUT
-    
+
     elif data.startswith('work_loc:'):
         try:
-            # Пропускаем обработку для refresh и manual
             action = data.split(':', 1)[1] if ':' in data else ''
-            if action in ['refresh', 'manual']:
-                # Эти действия обрабатываются отдельно выше
-                pass
-            else:
+            if action not in ['refresh', 'manual']:
                 idx = int(action)
                 suggestions = context.user_data.get('work_location_suggestions', [])
 
@@ -1656,7 +1939,7 @@ async def handle_work_location_suggestion(update: Update, context: ContextTypes.
                         return States.WORK_EQUIPMENT_TYPE_INPUT
         except (ValueError, IndexError) as e:
             logger.error(f"Ошибка обработки выбора локации: {e}")
-    
+
     return States.WORK_LOCATION_INPUT
 
 
@@ -1680,7 +1963,6 @@ async def handle_work_model_suggestion(update: Update, context: ContextTypes.DEF
             await query.edit_message_text(f"✅ Принято: {pending}")
 
             # Используем новую компонентную детекцию
-            from bot.services.printer_component_detector import component_detector
 
             # Отправляем сообщение о проверке компонентов
             status_msg = await query.message.reply_text(
@@ -1750,7 +2032,6 @@ async def handle_work_model_suggestion(update: Update, context: ContextTypes.DEF
                     )
                     # Показываем обновленные подсказки
                     try:
-                        from bot.handlers.suggestions_handler import show_model_suggestions
                         if await show_model_suggestions(
                             update, context, pending,
                             mode='work',
@@ -1768,7 +2049,6 @@ async def handle_work_model_suggestion(update: Update, context: ContextTypes.DEF
                         f"🔄 Обновляю поиск для: {pending}"
                     )
                     try:
-                        from bot.handlers.suggestions_handler import show_model_suggestions
                         if await show_model_suggestions(
                             update, context, pending,
                             mode='work',
@@ -1793,7 +2073,6 @@ async def handle_work_model_suggestion(update: Update, context: ContextTypes.DEF
                         await query.edit_message_text(f"✅ Выбрана модель: {selected_model}")
 
                         # Используем новую компонентную детекцию
-                        from bot.services.printer_component_detector import component_detector
 
                         # Отправляем сообщение о проверке компонентов
                         status_msg = await query.message.reply_text(
@@ -1854,3 +2133,312 @@ async def handle_work_model_suggestion(update: Update, context: ContextTypes.DEF
     else:
         logger.error(f"Неизвестный тип работы в handle_work_model_suggestion: {work_type}")
         return ConversationHandler.END
+
+
+@handle_errors
+async def work_component_serial_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обработчик ввода серийного номера ПК для замены компонента с поддержкой OCR
+    """
+    return await handle_serial_input_with_ocr(
+        update=update,
+        context=context,
+        temp_file_prefix="temp_component_replacement_",
+        user_data_serial_key="component_replacement_serial_no",
+        user_data_equipment_key="component_replacement_equipment",
+        error_state=States.WORK_COMPONENT_SERIAL_INPUT,
+        equipment_type_name="ПК",
+        confirmation_handler=show_component_selection_pc
+    )
+
+
+async def show_component_selection_pc(update: Update, context: ContextTypes.DEFAULT_TYPE, equipment: dict) -> int:
+    """
+    Показывает меню выбора компонента ПК для замены
+    """
+    serial_no = equipment.get('SERIAL_NO', 'N/A')
+    hw_serial_no = equipment.get('HW_SERIAL_NO', '')
+    model_name = equipment.get('MODEL_NAME', 'Неизвестная модель')
+
+    # Формируем текст с информацией о ПК
+    serial_display = f"{serial_no} / {hw_serial_no}" if hw_serial_no else serial_no
+
+    message_text = (
+        f"🖥️ <b>Замена компонентов ПК</b>\n\n"
+        f"🔢 <b>Серийный номер:</b> {serial_display}\n"
+        f"💻 <b>Модель:</b> {model_name}\n\n"
+        f"🔧 Выберите компонент для замены:"
+    )
+
+    # Создаем клавиатуру с компонентами ПК
+    keyboard = [
+        [InlineKeyboardButton("💾 HDD/SSD (Накопитель)", callback_data="pc_component:hdd_ssd")],
+        [InlineKeyboardButton("❄️ Кулер (Охлаждение)", callback_data="pc_component:cooler")],
+        [InlineKeyboardButton("🔲 Материнская плата", callback_data="pc_component:motherboard")],
+        [InlineKeyboardButton("🎮 Оперативная память (RAM)", callback_data="pc_component:ram")],
+        [InlineKeyboardButton("⚡ Блок питания (PSU)", callback_data="pc_component:psu")],
+        [InlineKeyboardButton("📺 Видеокарта (GPU)", callback_data="pc_component:gpu")],
+        [InlineKeyboardButton("🔧 Другое", callback_data="pc_component:other")],
+        [InlineKeyboardButton("❌ Отмена", callback_data="pc_component:cancel")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if update.callback_query:
+        await update.callback_query.message.reply_text(
+            message_text,
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+    else:
+        await update.message.reply_text(
+            message_text,
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+
+    return States.WORK_COMPONENT_SELECTION
+
+
+@handle_errors
+async def handle_pc_component_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обработчик выбора компонента ПК для замены
+    """
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+
+    if data.startswith('pc_component:'):
+        component_type = data.split(':', 1)[1] if ':' in data else ''
+
+        if component_type == 'cancel':
+            await query.edit_message_text("❌ Операция отменена")
+            clear_work_data(context)
+            return ConversationHandler.END
+
+        # Маппинг типов компонентов к их отображаемым именам
+        component_names = {
+            'hdd_ssd': 'HDD/SSD (Накопитель)',
+            'cooler': 'Кулер (Охлаждение)',
+            'motherboard': 'Материнская плата',
+            'ram': 'Оперативная память (RAM)',
+            'psu': 'Блок питания (PSU)',
+            'gpu': 'Видеокарта (GPU)',
+            'other': 'Другое'
+        }
+
+        component_name = component_names.get(component_type, component_type)
+        context.user_data['pc_component_type'] = component_type
+        context.user_data['pc_component_name'] = component_name
+
+        # Показываем подтверждение
+        return await show_component_confirmation_pc(update, context)
+
+    return States.WORK_COMPONENT_SELECTION
+
+@handle_errors
+async def show_component_confirmation_pc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Показывает подтверждение для замены компонента ПК
+    """
+    equipment = context.user_data.get('component_replacement_equipment', {})
+    component_name = context.user_data.get('pc_component_name', 'Неизвестный компонент')
+
+    serial_no = equipment.get('SERIAL_NO', 'N/A')
+    hw_serial_no = equipment.get('HW_SERIAL_NO', '')
+    model_name = equipment.get('MODEL_NAME', 'Неизвестная модель')
+    branch = equipment.get('BRANCH_NAME', 'Не указан')
+    location = equipment.get('LOCATION', 'Не указано')
+    employee = equipment.get('EMPLOYEE_NAME', 'Не назначен')
+
+    # Ищем последнюю замену этого компонента для этого ПК
+    last_replacement_section = ""
+    file_path = Path("data/component_replacements.json")
+
+    component_type = context.user_data.get('pc_component_type', '')
+
+    if file_path.exists():
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                replacements = json.load(f)
+
+            # Ищем замены для этого серийного номера и компонента
+            pc_replacements = [
+                r for r in replacements
+                if (r.get('serial_no') == serial_no or r.get('serial_no') == hw_serial_no)
+                and r.get('component_type') == component_type
+            ]
+
+            if pc_replacements:
+                # Сортируем по дате (убывание)
+                pc_replacements.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+                last_replacement = pc_replacements[0]
+                last_date = datetime.fromisoformat(last_replacement['timestamp'])
+
+                # Вычисляем сколько времени прошло
+                now = datetime.now()
+                delta = now - last_date
+                days_ago = delta.days
+
+                if days_ago == 0:
+                    time_ago = "сегодня"
+                elif days_ago == 1:
+                    time_ago = "вчера"
+                elif days_ago < 7:
+                    time_ago = f"{days_ago} дн. назад"
+                elif days_ago < 30:
+                    weeks = days_ago // 7
+                    time_ago = f"{weeks} нед. {'назад' if weeks == 1 else 'назад'}"
+                elif days_ago < 365:
+                    months = days_ago // 30
+                    time_ago = f"{months} мес. {'назад' if months == 1 else 'назад'}"
+                else:
+                    years = days_ago // 365
+                    time_ago = f"{years} г. {'назад' if years == 1 else 'назад'}"
+
+                # Формируем красивый блок с информацией о последней замене
+                last_replacement_section = (
+                    "\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🕒 <b>ИСТОРИЯ ЗАМЕН</b>\n"
+                    f"📅 <b>Последняя:</b> {last_date.strftime('%d.%m.%Y')} в {last_date.strftime('%H:%M')}\n"
+                    f"⏳ <b>Прошло:</b> {time_ago}\n"
+                    f"🔢 <b>Всего замен:</b> {len(pc_replacements)}\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                )
+        except Exception as e:
+            logger.error(f"Error reading component_replacements.json: {e}")
+
+    # Формируем текст подтверждения
+    serial_display = f"{serial_no} / {hw_serial_no}" if hw_serial_no else serial_no
+
+    confirmation_text = (
+        "📋 <b>Подтверждение замены компонента ПК</b>\n\n"
+        f"🔢 <b>Серийный номер:</b> {serial_display}\n"
+        f"💻 <b>Модель:</b> {model_name}\n"
+        f"🏢 <b>Филиал:</b> {branch}\n"
+        f"📍 <b>Локация:</b> {location}\n"
+        f"👤 <b>Сотрудник:</b> {employee}\n"
+        f"🔧 <b>Компонент:</b> {component_name}\n"
+        f"{last_replacement_section}"
+        "❓ Сохранить эти данные?"
+    )
+
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Сохранить", callback_data="confirm_work"),
+            InlineKeyboardButton("❌ Отменить", callback_data="cancel_work")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if update.callback_query:
+        await update.callback_query.message.reply_text(
+            confirmation_text,
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+    else:
+        await update.message.reply_text(
+            confirmation_text,
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+
+    return States.WORK_COMPONENT_CONFIRMATION
+
+
+async def save_component_replacement_pc(context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """
+    Сохраняет данные о замене компонента ПК в JSON и обновляет описание в базе данных
+    """
+    try:
+        file_path = Path("data/component_replacements.json")
+
+        # Загружаем существующие данные
+        if file_path.exists():
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        else:
+            data = []
+
+        # Получаем текущую БД пользователя
+        user_id = context._user_id if hasattr(context, '_user_id') else None
+        db_name = database_manager.get_user_database(user_id) if user_id else 'ITINVENT'
+
+        # Получаем данные о ПК
+        equipment = context.user_data.get('component_replacement_equipment', {})
+        equipment_id = equipment.get('ID')
+        current_description = equipment.get('DESCRIPTION') or ''
+
+        component_name = context.user_data.get('pc_component_name', 'Неизвестный компонент')
+        component_type = context.user_data.get('pc_component_type', 'other')
+
+        # Формируем строку с датой замены компонента (используем \r\n для переноса строки)
+        replacement_date = datetime.now().strftime("%d.%m.%Y %H:%M")
+        replacement_note = f"\r\nЗамена {component_name}: {replacement_date} (IT-BOT)"
+
+        # Обновляем описание в базе данных
+        if equipment_id:
+            config = database_manager.get_database_config(db_name)
+            if config:
+                db = UniversalInventoryDB(config)
+
+                # Проверяем, есть ли уже запись о замене этого компонента в описании
+                # Используем regex для поиска существующей записи
+                pattern = rf'Замена {re.escape(component_name)}:.*?\(IT-BOT\)'
+                if re.search(pattern, current_description):
+                    # Обновляем последнюю запись о замене
+                    new_description = re.sub(
+                        pattern,
+                        f'Замена {component_name}: {replacement_date} (IT-BOT)',
+                        current_description
+                    )
+                else:
+                    # Добавляем новую запись к описанию
+                    new_description = current_description + replacement_note
+
+                # UPDATE в базе
+                try:
+                    with db._get_connection() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            UPDATE ITEMS
+                            SET DESCR = ?, CH_DATE = GETDATE(), CH_USER = 'IT-BOT'
+                            WHERE ID = ?
+                        """, (new_description, equipment_id))
+                        conn.commit()
+                        logger.info(f"Обновлено описание для ID={equipment_id}: добавлена замена {component_name} от {replacement_date}")
+                except Exception as e:
+                    logger.error(f"Ошибка обновления описания: {e}")
+
+        # Создаем запись для JSON
+        record = {
+            'serial_no': context.user_data.get('component_replacement_serial_no', ''),
+            'hw_serial_no': equipment.get('HW_SERIAL_NO', ''),
+            'model_name': equipment.get('MODEL_NAME', ''),
+            'manufacturer': equipment.get('MANUFACTURER', ''),
+            'branch': equipment.get('BRANCH_NAME', ''),
+            'location': equipment.get('LOCATION', ''),
+            'employee': equipment.get('EMPLOYEE_NAME', ''),
+            'inv_no': equipment.get('INV_NO', ''),
+            'component_type': component_type,
+            'component_name': component_name,
+            'db_name': db_name,
+            'timestamp': datetime.now().isoformat()
+        }
+
+        data.append(record)
+
+        # Сохраняем JSON
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"Сохранена замена компонента ПК: {record}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Ошибка сохранения замены компонента ПК: {e}")
+        traceback.print_exc()
+        return False

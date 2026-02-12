@@ -4,19 +4,98 @@
 Обработчики управления базами данных
 Выбор БД, просмотр по типам оборудования, статистика.
 """
+import asyncio
 import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
+from telegram.error import TimedOut
 
 from bot.config import States, Messages
 from bot.utils.decorators import require_user_access, handle_errors
 from bot.utils.keyboards import create_main_menu_keyboard
-from bot.utils.pagination import paginate_results
+from bot.utils.pagination import paginate_results, PaginationHandler
 from bot.utils.formatters import format_equipment_info
-from database_manager import database_manager
-from universal_database import UniversalInventoryDB
+from bot.database_manager import database_manager
+from bot.universal_database import UniversalInventoryDB
 
 logger = logging.getLogger(__name__)
+
+
+# ============================ ОБРАБОТЧИКИ ПАГИНАЦИИ ============================
+
+# Обработчик для пагинации типов оборудования
+_types_pagination_handler = PaginationHandler(
+    page_key='equipment_types_page',
+    items_key='equipment_types_list',
+    items_per_page=8,
+    callback_prefix='types'
+)
+
+# Обработчик для пагинации списка оборудования
+_equipment_pagination_handler = PaginationHandler(
+    page_key='equipment_view_page',
+    items_key='equipment_view_list',
+    items_per_page=5,
+    callback_prefix='eq'
+)
+
+
+# ============================ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ============================
+
+async def send_document_with_retry(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    document_path: str,
+    filename: str,
+    caption: str,
+    parse_mode: str = None,
+    max_retries: int = 5
+) -> bool:
+    """
+    Отправляет документ с автоматическим повтором при timed out ошибке
+
+    Параметры:
+        context: Контекст выполнения бота
+        chat_id: ID чата для отправки
+        document_path: Путь к файлу
+        filename: Имя файла
+        caption: Подпись к документу
+        parse_mode: Режим форматирования (HTML, Markdown)
+        max_retries: Максимальное количество попыток (по умолчанию 5)
+
+    Возвращает:
+        bool: True если успешно отправлено, False иначе
+    """
+    for attempt in range(max_retries):
+        try:
+            with open(document_path, 'rb') as doc_file:
+                await context.bot.send_document(
+                    chat_id=chat_id,
+                    document=doc_file,
+                    filename=filename,
+                    caption=caption,
+                    parse_mode=parse_mode
+                )
+            logger.info(f"Документ {filename} успешно отправлен с попытки {attempt + 1}")
+            return True
+
+        except TimedOut as e:
+            wait_time = (attempt + 1) * 3  # 3, 6, 9, 12, 15 секунд
+            logger.warning(
+                f"Попытка {attempt + 1}/{max_retries}: Таймаут отправки документа {filename}. "
+                f"Ждем {wait_time} сек. перед следующей попыткой..."
+            )
+            if attempt < max_retries - 1:
+                await asyncio.sleep(wait_time)
+            else:
+                logger.error(f"Не удалось отправить документ {filename} после {max_retries} попыток")
+
+        except Exception as e:
+            logger.error(f"Ошибка отправки документа {filename}: {e}")
+            # Другие ошибки не retry'им
+            break
+
+    return False
 
 
 @require_user_access
@@ -91,28 +170,40 @@ async def handle_database_callback(update: Update, context: ContextTypes.DEFAULT
         # Выбор базы данных
         db_name = callback_data.split(":")[1]
         user_id = update.effective_user.id
-        
-        # Сохраняем выбор
-        database_manager.set_user_database(user_id, db_name)
+
+        # Проверяем и сохраняем выбор (с ограничением доступа)
+        success = database_manager.set_user_database(user_id, db_name)
+
+        if not success:
+            # Пользователь пытается переключиться на недоступную базу
+            await query.answer()
+            await query.edit_message_text(
+                f"⛔ <b>Доступ запрещён</b>\n\n"
+                f"Вы не можете переключиться на базу <b>{db_name}</b>.\n\n"
+                f"Ваша назначенная база: <b>{database_manager.get_user_assigned_database(user_id) or 'Не назначена'}</b>",
+                parse_mode='HTML'
+            )
+            return ConversationHandler.END
+
         context.user_data['selected_database'] = db_name
-        
+
         await query.edit_message_text(
             f"✅ <b>База данных изменена</b>\n\n"
             f"📋 <b>Выбрана база:</b> {db_name}\n\n"
             f"Теперь все операции будут выполняться с этой базой данных.",
             parse_mode='HTML'
         )
-        
+
         # Возвращаемся в главное меню
         import asyncio
         await asyncio.sleep(2)
-        
+
         await context.bot.send_message(
             chat_id=query.message.chat_id,
             text=Messages.MAIN_MENU,
             reply_markup=create_main_menu_keyboard()
         )
-        
+
         return ConversationHandler.END
     
     elif callback_data == "equipment_types_menu":
@@ -177,20 +268,12 @@ async def handle_database_callback(update: Update, context: ContextTypes.DEFAULT
     
     elif callback_data == "types_prev":
         # Предыдущая страница типов
-        current_page = context.user_data.get('equipment_types_page', 0)
-        if current_page > 0:
-            context.user_data['equipment_types_page'] = current_page - 1
+        _types_pagination_handler.handle_navigation(update, context, 'prev')
         return await show_equipment_types_menu(update, context)
-    
+
     elif callback_data == "types_next":
         # Следующая страница типов
-        equipment_types = context.user_data.get('equipment_types_list', [])
-        current_page = context.user_data.get('equipment_types_page', 0)
-        items_per_page = 8
-        total_pages = (len(equipment_types) + items_per_page - 1) // items_per_page
-        
-        if current_page < total_pages - 1:
-            context.user_data['equipment_types_page'] = current_page + 1
+        _types_pagination_handler.handle_navigation(update, context, 'next')
         return await show_equipment_types_menu(update, context)
     
     elif callback_data == "back_to_db_menu":
@@ -257,10 +340,10 @@ async def show_equipment_types_menu(update: Update, context: ContextTypes.DEFAUL
                 other_types.append(db_type)
         
         equipment_types = priority_types + other_types
-        
-        # Сохраняем в контексте
-        context.user_data['equipment_types_list'] = equipment_types
-        current_page = context.user_data.get('equipment_types_page', 0)
+
+        # Сохраняем в контексте через PaginationHandler
+        _types_pagination_handler.set_items(context, equipment_types)
+        current_page = _types_pagination_handler.get_current_page(context)
         
         # Создаем клавиатуру с пагинацией
         reply_markup = generate_equipment_types_keyboard(equipment_types, current_page)
@@ -480,10 +563,10 @@ async def show_equipment_by_type_and_branch(update: Update, context: ContextType
             return (0, location.lower())
         
         equipment_list = sorted(equipment_list, key=equipment_sort_key)
-        
-        # Сохраняем отсортированный список для пагинации
-        context.user_data['equipment_view_list'] = equipment_list
-        context.user_data['equipment_view_page'] = 0
+
+        # Сохраняем отсортированный список для пагинации через PaginationHandler
+        _equipment_pagination_handler.set_items(context, equipment_list)
+        _equipment_pagination_handler.reset_pagination(context)
         context.user_data['equipment_type_filter'] = equipment_type
         context.user_data['equipment_branch_filter'] = branch_name
         
@@ -506,25 +589,17 @@ async def show_equipment_by_type_and_branch(update: Update, context: ContextType
 async def show_equipment_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     Отображает страницу с оборудованием
-    
+
     Параметры:
         update: Объект обновления от Telegram API
         context: Контекст выполнения
     """
-    equipment_list = context.user_data.get('equipment_view_list', [])
-    current_page = context.user_data.get('equipment_view_page', 0)
+    equipment_list = _equipment_pagination_handler.get_items(context)
     equipment_type = context.user_data.get('equipment_type_filter', 'Неизвестен')
     branch_filter = context.user_data.get('equipment_branch_filter')
-    
-    from bot.config import PaginationConfig
-    config = PaginationConfig()
-    
-    # Пагинация
-    page_items, total_pages, has_prev, has_next = paginate_results(
-        equipment_list,
-        current_page,
-        config.items_per_page
-    )
+
+    # Пагинация через PaginationHandler
+    page_items, current_page, total_pages, has_prev, has_next = _equipment_pagination_handler.get_page_data(context)
     
     # Формируем сообщение
     message_lines = [
@@ -543,7 +618,7 @@ async def show_equipment_page(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     # Выводим оборудование (уже отсортировано при загрузке)
     for i, equipment in enumerate(page_items, 1):
-        item_num = current_page * config.items_per_page + i
+        item_num = current_page * _equipment_pagination_handler.items_per_page + i
         message_lines.append(f"<b>{item_num}.</b>")
         message_lines.append(format_equipment_info(equipment))
         message_lines.append("")
@@ -596,21 +671,11 @@ async def handle_equipment_pagination(update: Update, context: ContextTypes.DEFA
     callback_data = query.data
     
     if callback_data == "eq_prev":
-        current_page = context.user_data.get('equipment_view_page', 0)
-        if current_page > 0:
-            context.user_data['equipment_view_page'] = current_page - 1
+        _equipment_pagination_handler.handle_navigation(update, context, 'prev')
         return await show_equipment_page(update, context)
-    
+
     elif callback_data == "eq_next":
-        equipment_list = context.user_data.get('equipment_view_list', [])
-        current_page = context.user_data.get('equipment_view_page', 0)
-
-        from bot.config import PaginationConfig
-        config = PaginationConfig()
-        total_pages = (len(equipment_list) + config.items_per_page - 1) // config.items_per_page
-
-        if current_page < total_pages - 1:
-            context.user_data['equipment_view_page'] = current_page + 1
+        _equipment_pagination_handler.handle_navigation(update, context, 'next')
         return await show_equipment_page(update, context)
 
     else:
@@ -795,25 +860,27 @@ async def handle_export_database_callback(update: Update, context: ContextTypes.
         excel_path = await export_database_to_excel(db_name)
 
         if excel_path:
-            # Отправляем файл
-            try:
-                import os
-                record_count = count_records_in_excel(excel_path)
-                filename = os.path.basename(excel_path)
+            # Отправляем файл с автоматическим повтором при таймауте
+            import os
+            record_count = count_records_in_excel(excel_path)
+            filename = os.path.basename(excel_path)
 
-                with open(excel_path, 'rb') as excel_file:
-                    await context.bot.send_document(
-                        chat_id=query.message.chat_id,
-                        document=excel_file,
-                        filename=filename,
-                        caption=f"✅ Экспорт базы <b>{db_name}</b>\n\nВсего записей: {record_count}",
-                        parse_mode='HTML'
-                    )
-            except Exception as e:
-                logger.error(f"Ошибка отправки Excel файла: {e}")
+            caption = f"✅ Экспорт базы <b>{db_name}</b>\n\nВсего записей: {record_count}"
+
+            sent = await send_document_with_retry(
+                context=context,
+                chat_id=query.message.chat_id,
+                document_path=excel_path,
+                filename=filename,
+                caption=caption,
+                parse_mode='HTML',
+                max_retries=5
+            )
+
+            if not sent:
                 await context.bot.send_message(
                     chat_id=query.message.chat_id,
-                    text=f"❌ Ошибка при отправке файла: {e}"
+                    text="❌ Не удалось отправить файл после нескольких попыток. Попробуйте позже."
                 )
         else:
             await context.bot.send_message(
@@ -837,10 +904,7 @@ async def export_database_to_excel(db_name: str) -> str:
     Возвращает:
         str: Путь к созданному Excel файлу или None в случае ошибки
     """
-    import os
-    from datetime import datetime
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from bot.services.excel_service import DatabaseExcelExporter, count_excel_records
 
     try:
         # Получаем конфиг базы данных
@@ -927,166 +991,10 @@ async def export_database_to_excel(db_name: str) -> str:
             logger.warning(f"Нет данных для экспорта в базе {db_name}")
             return None
 
-        # Создаем директорию для экспорта
-        export_dir = "exports"
-        os.makedirs(export_dir, exist_ok=True)
+        # Создаем экспортер и экспортируем данные
+        exporter = DatabaseExcelExporter()
+        excel_file = exporter.export_database(rows, db_name)
 
-        # Формируем имя файла с датой
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        excel_file = os.path.join(export_dir, f"{db_name}_export_{timestamp}.xlsx")
-
-        # Создаем Excel книгу
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Экспорт оборудования"
-
-        # Стили
-        header_font = Font(bold=True, size=11)
-        header_fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9")
-        header_alignment = Alignment(horizontal="center", vertical="center")
-        group_alignment = Alignment(horizontal="left", vertical="center")
-        branch_font = Font(bold=True, size=13, color="000000")  # Чёрный текст для лучшей видимости
-        branch_fill = PatternFill(start_color="B4C7E7", end_color="B4C7E7")  # Светло-синий фон
-        location_font = Font(bold=True, size=11)
-        location_fill = PatternFill(start_color="E7E6E6", end_color="E7E6E6")
-        border = Border(
-            left=Side(style='thin'),
-            right=Side(style='thin'),
-            top=Side(style='thin'),
-            bottom=Side(style='thin')
-        )
-
-        # Добавляем заголовок с технической информацией (первые 3 строки)
-        ws['A1'] = f"База данных: {db_name}"
-        ws['A2'] = f"Дата экспорта: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}"
-        ws['A3'] = f"Всего записей: {len(rows)}"
-        ws['A1'].font = Font(bold=True, size=12)
-        ws.merge_cells(f'A1:N1')
-        ws.merge_cells(f'A2:N2')
-        ws.merge_cells(f'A3:N3')
-
-        # Заголовки колонок (строка 5)
-        headers = [
-            'Инв. №',
-            'Сотрудник',
-            'Тип',
-            'Серийный №',
-            'Апп. серийный №',
-            'Партийный №',
-            'Модель',
-            'Производитель',
-            'Местоположение',
-            'Таб. №',
-            'Отдел',
-            'Филиал',
-            'Статус',
-            'Описание'
-        ]
-
-        header_row = 5
-        for col_idx, header in enumerate(headers, start=1):
-            cell = ws.cell(row=header_row, column=col_idx, value=header)
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = header_alignment
-            cell.border = border
-
-        # Группируем данные по филиалу и местоположению
-        current_row = header_row + 1
-        _FIRST_BRANCH_SENTINEL = object()  # Уникальный объект-маркер
-        current_branch = _FIRST_BRANCH_SENTINEL
-        current_location = None
-
-        for row in rows:
-            # Распаковываем строку по индексам (как в SQL запросе)
-            inv_no = row[0]
-            employee_name = row[1]
-            equipment_type = row[2]
-            serial_no = row[3]
-            hw_serial_no = row[4]
-            part_no = row[5]
-            model = row[6]
-            manufacturer = row[7]
-            location = row[8] or 'Не указано'
-            empl_no = row[9]
-            dept = row[10]
-            branch = row[11] or 'Не указан'
-            status = row[12]
-            description = row[13]
-
-            # Логирование для отладки
-            logger.debug(f"Row: branch='{branch}', location='{location}'")
-
-            # Новый филиал - добавляем заголовок группы
-            if branch != current_branch:
-                if current_branch is not _FIRST_BRANCH_SENTINEL:  # Если это НЕ первый филиал
-                    current_row += 1  # Пустая строка между филиалами
-
-                current_branch = branch
-                current_location = None
-
-                logger.info(f"Creating branch header at row {current_row}: '{branch}'")
-
-                # Заголовок филиала (на всю ширину)
-                ws.merge_cells(f'A{current_row}:N{current_row}')
-                cell = ws.cell(row=current_row, column=1, value=f"🏢 {branch}")
-                cell.font = branch_font
-                cell.fill = branch_fill
-                cell.alignment = group_alignment
-                current_row += 1
-
-            # Новое местоположение внутри филиала
-            if location != current_location:
-                current_location = location
-
-                # Заголовок местоположения
-                ws.merge_cells(f'A{current_row}:N{current_row}')
-                cell = ws.cell(row=current_row, column=1, value=f"📍 {location}")
-                cell.font = location_font
-                cell.fill = location_fill
-                cell.alignment = group_alignment
-                current_row += 1
-
-            # Данные оборудования - ВСЕ 14 полей в правильном порядке
-            data = [
-                inv_no or '',                      # 1. Инв. №
-                employee_name or 'Не назначен',    # 2. Сотрудник
-                equipment_type or '',              # 3. Тип
-                serial_no or '',                   # 4. Серийный №
-                hw_serial_no or '',                # 5. Апп. серийный №
-                part_no or '',                     # 6. Партийный №
-                model or '',                       # 7. Модель
-                manufacturer or '',                 # 8. Производитель
-                location,                          # 9. Местоположение
-                empl_no or '',                     # 10. Таб. №
-                dept or '',                        # 11. Отдел
-                branch,                            # 12. Филиал
-                status or '',                      # 13. Статус
-                description or ''                  # 14. Описание
-            ]
-
-            for col_idx, value in enumerate(data, start=1):
-                cell = ws.cell(row=current_row, column=col_idx, value=value)
-                cell.border = border
-                cell.alignment = Alignment(vertical="top", wrap_text=False)
-
-                # Форматирование для важных полей
-                if col_idx == 4:  # Серийный номер - жирный
-                    cell.font = Font(bold=True)
-                elif col_idx == 2 and employee_name and employee_name != 'Не назначен':  # Сотрудник - жёлтый фон
-                    cell.fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC")
-
-            current_row += 1
-
-        # Автоматическая ширина колонок
-        column_widths = [12, 20, 15, 18, 18, 12, 20, 15, 25, 10, 18, 15, 12, 35]
-        for col_idx, width in enumerate(column_widths, start=1):
-            ws.column_dimensions[chr(64 + col_idx)].width = width
-
-        # Сохраняем файл
-        wb.save(excel_file)
-
-        logger.info(f"Экспорт базы {db_name} завершен: {excel_file} ({len(rows)} записей)")
         return excel_file
 
     except Exception as e:
@@ -1104,16 +1012,5 @@ def count_records_in_excel(excel_path: str) -> int:
     Возвращает:
         int: Количество записей оборудования
     """
-    try:
-        from openpyxl import load_workbook
-        wb = load_workbook(excel_path, read_only=True)
-        ws = wb.active
-
-        # Количество записей = все строки минус заголовки (5 строк технической информации)
-        # Формула: общее количество строк - 5 (заголовки)
-        record_count = ws.max_row - 5
-        wb.close()
-
-        return max(0, record_count)
-    except Exception:
-        return 0
+    from bot.services.excel_service import count_excel_records
+    return count_excel_records(excel_path)

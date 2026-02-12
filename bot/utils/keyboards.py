@@ -19,7 +19,7 @@ def create_main_menu_keyboard() -> ReplyKeyboardMarkup:
     """
     keyboard = [
         [
-            KeyboardButton("🔎 Найти по серийному номеру"),
+            KeyboardButton("🔎 Добавить или Найти"),
             KeyboardButton("👤 Найти по сотруднику")
         ],
         [

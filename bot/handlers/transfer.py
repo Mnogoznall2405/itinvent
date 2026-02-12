@@ -16,13 +16,22 @@ from bot.config import States, Messages, StorageKeys
 from bot.utils.decorators import require_user_access, handle_errors
 from bot.services.ocr_service import extract_serial_from_image
 from bot.services.validation import validate_employee_name
-from database_manager import database_manager
-from equipment_data_manager import EquipmentDataManager
+from bot.database_manager import database_manager
+from bot.equipment_data_manager import EquipmentDataManager
 
 logger = logging.getLogger(__name__)
 
 # Глобальный менеджер данных
 equipment_manager = EquipmentDataManager()
+
+
+# ============================ ОБРАБОТЧИК ПАГИНАЦИИ ============================
+# Импортируем универсальные обработчики локаций из location.py
+from bot.handlers.location import (
+    _transfer_location_pagination_handler,
+    show_location_buttons,
+    handle_location_navigation_universal
+)
 
 
 async def send_document_with_retry(
@@ -201,24 +210,9 @@ async def receive_transfer_photos(update: Update, context: ContextTypes.DEFAULT_
                 return States.TRANSFER_WAIT_PHOTOS
             
             try:
+                # Поиск оборудования (автоматически пробует варианты O↔0)
                 equipment = db.find_by_serial_number(serial)
-                
-                # Если не найдено, пробуем варианты с заменой O↔0
-                if not equipment:
-                    from bot.services.ocr_service import generate_serial_variants
-                    variants = generate_serial_variants(serial)
-                    
-                    # Пробуем каждый вариант (кроме оригинала, который уже проверили)
-                    for variant in variants:
-                        if variant != serial:
-                            logger.info(f"Пробуем вариант: {variant}")
-                            equipment = db.find_by_serial_number(variant)
-                            if equipment:
-                                logger.info(f"✅ Найдено по варианту: {variant} (оригинал: {serial})")
-                                # Обновляем serial для отображения
-                                serial = variant
-                                break
-                
+
             except Exception as e:
                 logger.warning(f"Ошибка поиска оборудования {serial}: {e}")
                 equipment = None
@@ -233,7 +227,8 @@ async def receive_transfer_photos(update: Update, context: ContextTypes.DEFAULT_
                 
                 context.user_data[StorageKeys.TEMP_PHOTOS].append(photo_path)
                 context.user_data[StorageKeys.TEMP_SERIALS].append({
-                    'serial': serial,
+                    'serial': equipment.get('SERIAL_NO', serial),  # Используем реальный серийный номер из БД
+                    'serial_input': serial,  # Сохраняем OCR-номер для информации
                     'current_employee': employee_name,
                     'equipment': equipment
                 })
@@ -275,22 +270,22 @@ async def receive_transfer_photos(update: Update, context: ContextTypes.DEFAULT_
 async def receive_new_employee(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     Обработчик ввода нового сотрудника
-    
+
     Параметры:
         update: Объект обновления от Telegram API
         context: Контекст выполнения
-        
+
     Возвращает:
         int: Следующее состояние
     """
     if not update.message or not update.message.text:
         await update.message.reply_text("Пожалуйста, введите ФИО нового сотрудника.")
         return States.TRANSFER_NEW_EMPLOYEE
-    
+
     from bot.handlers.suggestions_handler import show_employee_suggestions
-    
+
     new_employee = update.message.text.strip()
-    
+
     # Показываем подсказки если есть совпадения
     if await show_employee_suggestions(
         update, context, new_employee,
@@ -299,7 +294,7 @@ async def receive_new_employee(update: Update, context: ContextTypes.DEFAULT_TYP
         suggestions_key='transfer_employee_suggestions'
     ):
         return States.TRANSFER_NEW_EMPLOYEE
-    
+
     # Валидация ФИО
     if not validate_employee_name(new_employee):
         await update.message.reply_text(
@@ -307,8 +302,45 @@ async def receive_new_employee(update: Update, context: ContextTypes.DEFAULT_TYP
             "Пожалуйста, введите корректное ФИО."
         )
         return States.TRANSFER_NEW_EMPLOYEE
-    
-    # Сохраняем нового сотрудника
+
+    # Проверяем, существует ли сотрудник в базе
+    user_id = update.effective_user.id
+    db = database_manager.create_database_connection(user_id)
+    employee_exists = False
+
+    if db:
+        try:
+            owner_no = db.get_owner_no_by_name(new_employee, strict=True)
+            if not owner_no:
+                owner_no = db.get_owner_no_by_name(new_employee, strict=False)
+            employee_exists = owner_no is not None
+        except Exception as e:
+            logger.error(f"Ошибка проверки сотрудника: {e}")
+        finally:
+            db.close_connection()
+
+    # Если сотрудника нет в базе - запрашиваем подтверждение
+    if not employee_exists:
+        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+
+        context.user_data['pending_employee_add'] = new_employee
+
+        keyboard = [
+            [InlineKeyboardButton("✅ Да, добавить", callback_data="transfer_emp_add:confirm")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="transfer_emp_add:cancel")]
+        ]
+
+        await update.message.reply_text(
+            f"⚠️ <b>Сотрудник не найден</b>\n\n"
+            f"Сотрудник <b>{new_employee}</b> не найден в базе данных.\n\n"
+            f"Добавить нового сотрудника и продолжить?",
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        return States.TRANSFER_NEW_EMPLOYEE
+
+    # Сотрудник существует - продолжаем
     context.user_data['new_employee'] = new_employee
 
     # Получаем отдел нового сотрудника из БД
@@ -355,15 +387,26 @@ async def receive_transfer_branch(update: Update, context: ContextTypes.DEFAULT_
     # Сохраняем филиал
     context.user_data['new_branch'] = branch
 
-    # Запрашиваем локацию/кабинет
-    await update.message.reply_text(
-        "📍 <b>Укажите локацию/кабинет</b>\n\n"
-        "Введите кабинет или расположение, где установлено оборудование:\n"
-        "Например: кабинет 101, 2 этаж, серверная и т.д.",
-        parse_mode='HTML'
-    )
+    # Показываем кнопки локаций для выбранного филиала
+    await show_transfer_location_buttons(update, context, branch)
 
     return States.TRANSFER_NEW_LOCATION
+
+
+async def show_transfer_location_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE, branch: str) -> None:
+    """
+    Показывает кнопки выбора локации для выбранного филиала (при перемещении) с пагинацией.
+    Использует универсальную функцию из unfound.py с mode='transfer'.
+    """
+    user_id = update.effective_user.id
+    context._user_id = user_id  # Сохраняем для show_location_buttons
+
+    await show_location_buttons(
+        message=update.message,
+        context=context,
+        mode='transfer',
+        branch=branch
+    )
 
 
 @handle_errors
@@ -586,6 +629,74 @@ async def handle_transfer_confirmation(update: Update, context: ContextTypes.DEF
 
                             # Сохраняем информацию о перемещениях для этой группы
                             equipment_list = grouped_equipment.get(old_employee, [])
+
+                            # Получаем EMPL_NO, BRANCH_NO и LOC_NO для нового размещения
+                            new_employee_id = None
+                            new_branch_no = None
+                            new_loc_no = None
+
+                            transfer_db = database_manager.create_database_connection(user_id)
+                            if transfer_db:
+                                try:
+                                    # Получаем EMPL_NO нового сотрудника
+                                    new_employee_id = transfer_db.get_owner_no_by_name(new_employee, strict=True)
+                                    if not new_employee_id:
+                                        new_employee_id = transfer_db.get_owner_no_by_name(new_employee, strict=False)
+
+                                    # Если сотрудник не найден - создаём его
+                                    if not new_employee_id:
+                                        logger.info(f"Сотрудник '{new_employee}' не найден в OWNERS, создаём новую запись")
+                                        new_employee_id = transfer_db.create_owner(
+                                            employee_name=new_employee,
+                                            department=new_employee_dept
+                                        )
+                                        if new_employee_id:
+                                            logger.info(f"✅ Создан новый владелец: {new_employee} (OWNER_NO={new_employee_id})")
+                                        else:
+                                            logger.error(f"❌ Не удалось создать владельца для '{new_employee}'")
+
+                                    logger.info(f"Используем EMPL_NO для '{new_employee}': {new_employee_id}")
+
+                                    # Получаем BRANCH_NO по названию филиала
+                                    if new_branch:
+                                        new_branch_no = transfer_db.get_branch_no_by_name(new_branch)
+                                        logger.info(f"Найден BRANCH_NO для '{new_branch}': {new_branch_no}")
+
+                                    # Получаем LOC_NO по описанию локации
+                                    if new_location:
+                                        new_loc_no = transfer_db.get_loc_no_by_descr(new_location)
+                                        logger.info(f"Найден LOC_NO для '{new_location}': {new_loc_no}")
+
+                                    # Обновляем оборудование в базе данных и добавляем запись в историю
+                                    if new_employee_id:
+                                        for item in equipment_list:
+                                            serial = item.get('serial', '')
+                                            comment = f"Перемещение оборудования: {old_employee} -> {new_employee}"
+
+                                            try:
+                                                result = transfer_db.transfer_equipment_with_history(
+                                                    serial_number=serial,
+                                                    new_employee_id=new_employee_id,
+                                                    new_employee_name=new_employee,
+                                                    new_branch_no=new_branch_no,
+                                                    new_loc_no=new_loc_no,
+                                                    comment=comment
+                                                )
+
+                                                if result.get('success'):
+                                                    logger.info(f"✅ База обновлена: {result.get('message')}")
+                                                else:
+                                                    logger.warning(f"⚠️ Не удалось обновить БД для {serial}: {result.get('message')}")
+
+                                            except Exception as e:
+                                                logger.error(f"❌ Ошибка обновления БД для {serial}: {e}", exc_info=True)
+
+                                except Exception as e:
+                                    logger.error(f"Ошибка при обновлении базы данных: {e}", exc_info=True)
+                                finally:
+                                    transfer_db.close_connection()
+
+                            # Сохраняем информацию о перемещениях в JSON (для обратной совместимости)
                             for item in equipment_list:
                                 # Добавляем db_name, branch и location в additional_data
                                 additional_data = item.get('equipment', {}).copy()
@@ -792,18 +903,64 @@ def clear_transfer_data(context: ContextTypes.DEFAULT_TYPE) -> None:
 async def handle_employee_suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     Обработчик выбора сотрудника из подсказок для перемещения
-    
+
     Параметры:
         update: Объект обновления от Telegram API
         context: Контекст выполнения
-        
+
     Возвращает:
         int: Следующее состояние
     """
     from bot.handlers.suggestions_handler import handle_employee_suggestion_generic
-    
+
     query = update.callback_query
     data = query.data
+
+    # Обработка подтверждения добавления нового сотрудника
+    if data.startswith('transfer_emp_add:'):
+        action = data.split(':', 1)[1]
+
+        if action == 'confirm':
+            # Пользователь подтвердил добавление нового сотрудника
+            employee_name = context.user_data.get('pending_employee_add', '').strip()
+
+            if not employee_name:
+                await query.answer()
+                await query.edit_message_text("❌ Ошибка: ФИО сотрудника не найдено.")
+                return States.TRANSFER_NEW_EMPLOYEE
+
+            context.user_data['new_employee'] = employee_name
+            context.user_data.pop('pending_employee_add', None)
+
+            await query.answer()
+            await query.edit_message_text(f"✅ Будет добавлен новый сотрудник: {employee_name}")
+
+            # Запрашиваем филиал
+            await query.message.reply_text(
+                "🏢 <b>Укажите филиал</b>\n\n"
+                "Введите название филиала, куда перемещено оборудование:",
+                parse_mode='HTML'
+            )
+
+            return States.TRANSFER_NEW_BRANCH
+
+        elif action == 'cancel':
+            # Пользователь отменил - просим ввести ФИО заново
+            context.user_data.pop('pending_employee_add', None)
+
+            await query.answer()
+            await query.edit_message_text(
+                "❌ Отменено. Пожалуйста, введите ФИО сотрудника заново."
+            )
+
+            await query.message.reply_text(
+                "👤 <b>Введите ФИО нового сотрудника</b>\n\n"
+                "На кого перемещаем оборудование?",
+                parse_mode='HTML'
+            )
+
+            return States.TRANSFER_NEW_EMPLOYEE
+
     suggestions = context.user_data.get('transfer_employee_suggestions', [])
     
     # Обработка выбора конкретного сотрудника
@@ -866,7 +1023,7 @@ async def handle_employee_suggestion_callback(update: Update, context: ContextTy
         )
 
         return States.TRANSFER_NEW_BRANCH
-    
+
     # Обработка "Обновить список" - используем универсальный обработчик
     return await handle_employee_suggestion_generic(
         update=update,
@@ -1037,12 +1194,14 @@ async def handle_transfer_branch_callback(update: Update, context: ContextTypes.
 
                 await query.edit_message_text(f"✅ Выбран филиал: {selected_branch}")
 
-                # Запрашиваем локацию
-                await query.message.reply_text(
-                    "📍 <b>Укажите локацию/кабинет</b>\n\n"
-                    "Введите кабинет или расположение, где установлено оборудование:\n"
-                    "Например: кабинет 101, 2 этаж, серверная и т.д.",
-                    parse_mode='HTML'
+                # Показываем кнопки локаций для выбранного филиала (используем универсальную функцию)
+                context._user_id = query.from_user.id
+                await show_location_buttons(
+                    message=query.message,
+                    context=context,
+                    mode='transfer',
+                    branch=selected_branch,
+                    query=query
                 )
 
                 return States.TRANSFER_NEW_LOCATION
@@ -1062,12 +1221,14 @@ async def handle_transfer_branch_callback(update: Update, context: ContextTypes.
         context.user_data['new_branch'] = pending
         await query.edit_message_text(f"✅ Принято: {pending}")
 
-        # Запрашиваем локацию
-        await query.message.reply_text(
-            "📍 <b>Укажите локацию/кабинет</b>\n\n"
-            "Введите кабинет или расположение, где установлено оборудование:\n"
-            "Например: кабинет 101, 2 этаж, серверная и т.д.",
-            parse_mode='HTML'
+        # Показываем кнопки локаций для выбранного филиала (используем универсальную функцию)
+        context._user_id = query.from_user.id
+        await show_location_buttons(
+            message=query.message,
+            context=context,
+            mode='transfer',
+            branch=pending,
+            query=query
         )
 
         return States.TRANSFER_NEW_LOCATION
@@ -1091,7 +1252,7 @@ async def handle_transfer_location_callback(update: Update, context: ContextType
     await query.answer()
 
     data = query.data
-    suggestions = context.user_data.get('transfer_location_suggestions', [])
+    suggestions = _transfer_location_pagination_handler.get_items(context)
 
     # Обработка выбора конкретной локации
     if data.startswith('transfer_location:') and not data.endswith(':manual'):
@@ -1127,5 +1288,14 @@ async def handle_transfer_location_callback(update: Update, context: ContextType
         await show_transfer_confirmation(update, context)
 
         return States.TRANSFER_CONFIRMATION
+
+    # Обработка навигации по страницам через универсальный обработчик
+    elif data in ('transfer_location_prev', 'transfer_location_next'):
+        return await handle_location_navigation_universal(update, context, mode='transfer') or States.TRANSFER_NEW_LOCATION
+
+    elif data == 'transfer_location_page_info':
+        # Информационная кнопка - ничего не делаем
+        await query.answer()
+        return States.TRANSFER_NEW_LOCATION
 
     return States.TRANSFER_NEW_LOCATION

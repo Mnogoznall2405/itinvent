@@ -5,7 +5,7 @@
 """
 import logging
 from typing import List
-from database_manager import database_manager
+from bot.database_manager import database_manager
 
 logger = logging.getLogger(__name__)
 
@@ -244,15 +244,16 @@ def get_model_suggestions(query: str, user_id: int, limit: int = 8, equipment_ty
 
 
 
-def get_location_suggestions(query: str, user_id: int, limit: int = 8) -> List[str]:
+def get_location_suggestions(query: str, user_id: int, limit: int = 8, branch: str = None) -> List[str]:
     """
-    Возвращает список уникальных локаций по подстроке
-    
+    Возвращает список уникальных локаций по подстроке с опциональной фильтрацией по филиалу
+
     Параметры:
         query: Подстрока для поиска
         user_id: ID пользователя
         limit: Максимальное количество подсказок
-        
+        branch: Филиал для фильтрации (опционально)
+
     Возвращает:
         List[str]: Список локаций
     """
@@ -260,53 +261,61 @@ def get_location_suggestions(query: str, user_id: int, limit: int = 8) -> List[s
         user_db = database_manager.create_database_connection(user_id)
         if not user_db:
             return []
-        
+
         conn = user_db._get_connection()
         cursor = conn.cursor()
         param = f"%{query}%"
-        
-        # Пробуем получить из таблицы LOCATIONS
+
+        # Получаем локации через таблицу LOCATIONS для получения читаемых названий
         try:
-            cursor.execute(
-                """
-                SELECT DISTINCT l.DESCR
-                FROM LOCATIONS l
-                WHERE l.DESCR LIKE ?
-                ORDER BY l.DESCR
-                """,
-                (param,)
-            )
-            locations = [row[0].strip() for row in cursor.fetchall() if row[0] and row[0].strip()]
-        except Exception:
-            # Fallback: получаем из ITEMS
-            cursor.execute(
-                """
-                SELECT DISTINCT i.LOC_NO
-                FROM ITEMS i
-                WHERE i.LOC_NO LIKE ? AND i.LOC_NO IS NOT NULL
-                ORDER BY i.LOC_NO
-                """,
-                (param,)
-            )
-            locations = [row[0].strip() for row in cursor.fetchall() if row[0] and row[0].strip()]
-        
+            if branch:
+                # Фильтруем по филиалу через таблицу BRANCHES
+                cursor.execute(
+                    """
+                    SELECT DISTINCT l.DESCR
+                    FROM ITEMS i
+                    JOIN BRANCHES b ON i.BRANCH_NO = b.BRANCH_NO
+                    LEFT JOIN LOCATIONS l ON i.LOC_NO = l.LOC_NO
+                    WHERE l.DESCR LIKE ? AND l.DESCR IS NOT NULL AND b.BRANCH_NAME = ?
+                    ORDER BY l.DESCR
+                    """,
+                    (param, branch)
+                )
+            else:
+                # Без фильтрации по филиалу
+                cursor.execute(
+                    """
+                    SELECT DISTINCT l.DESCR
+                    FROM LOCATIONS l
+                    WHERE l.DESCR LIKE ?
+                    ORDER BY l.DESCR
+                    """,
+                    (param,)
+                )
+            # Преобразуем в строку перед обработкой (DESCR может быть числом)
+            locations = [str(row[0]).strip() for row in cursor.fetchall() if row[0] and str(row[0]).strip()]
+
+        except Exception as e:
+            logger.error(f"Ошибка при получении локаций: {e}")
+            locations = []
+
         cursor.close()
-        
+
         # Фильтруем и сортируем
         uniq = []
         seen = set()
         q = query.casefold()
-        
+
         for loc in locations:
             if loc and loc not in seen:
                 seen.add(loc)
                 uniq.append(loc)
-        
+
         starts = [l for l in uniq if l.casefold().startswith(q)]
         contains = [l for l in uniq if not l.casefold().startswith(q) and q in l.casefold()]
-        
+
         return (starts + contains)[:limit]
-        
+
     except Exception as e:
         logger.error(f"Ошибка получения подсказок локаций: {e}")
         return []
@@ -315,10 +324,10 @@ def get_location_suggestions(query: str, user_id: int, limit: int = 8) -> List[s
 def get_branch_suggestions(user_id: int) -> List[str]:
     """
     Возвращает список всех филиалов
-    
+
     Параметры:
         user_id: ID пользователя
-        
+
     Возвращает:
         List[str]: Список филиалов
     """
@@ -326,12 +335,57 @@ def get_branch_suggestions(user_id: int) -> List[str]:
         user_db = database_manager.create_database_connection(user_id)
         if not user_db:
             return []
-        
+
         branches = user_db.get_branches()
         return [b.get('BRANCH_NAME', '') for b in branches if b.get('BRANCH_NAME')]
-        
+
     except Exception as e:
         logger.error(f"Ошибка получения подсказок филиалов: {e}")
+        return []
+
+
+def get_locations_by_branch(user_id: int, branch: str) -> List[str]:
+    """
+    Возвращает список всех локаций для указанного филиала
+
+    Параметры:
+        user_id: ID пользователя
+        branch: Название филиала
+
+    Возвращает:
+        List[str]: Список локаций
+    """
+    try:
+        user_db = database_manager.create_database_connection(user_id)
+        if not user_db:
+            return []
+
+        conn = user_db._get_connection()
+        cursor = conn.cursor()
+
+        # Получаем локации для конкретного филиала через таблицу LOCATIONS
+        cursor.execute(
+            """
+            SELECT DISTINCT l.DESCR
+            FROM ITEMS i
+            JOIN BRANCHES b ON i.BRANCH_NO = b.BRANCH_NO
+            LEFT JOIN LOCATIONS l ON i.LOC_NO = l.LOC_NO
+            WHERE i.LOC_NO IS NOT NULL AND i.LOC_NO != '' AND b.BRANCH_NAME = ?
+                AND l.DESCR IS NOT NULL AND l.DESCR != ''
+            ORDER BY l.DESCR
+            """,
+            (branch,)
+        )
+
+        # Преобразуем в строку перед обработкой (DESCR может быть числом)
+        locations = [str(row[0]).strip() for row in cursor.fetchall() if row[0] and str(row[0]).strip()]
+        cursor.close()
+
+        logger.info(f"[SUGGESTIONS] Получено {len(locations)} локаций для филиала '{branch}'")
+        return locations
+
+    except Exception as e:
+        logger.error(f"Ошибка получения локаций по филиалу: {e}", exc_info=True)
         return []
 
 

@@ -12,11 +12,22 @@ from telegram.ext import ContextTypes, ConversationHandler
 from bot.config import States, Messages, StorageKeys, PaginationConfig
 from bot.utils.decorators import require_user_access, handle_errors
 from bot.utils.formatters import format_equipment_info
-from bot.utils.pagination import paginate_results
+from bot.utils.pagination import paginate_results, PaginationHandler
 from bot.services.validation import validate_employee_name
-from database_manager import database_manager
+from bot.database_manager import database_manager
 
 logger = logging.getLogger(__name__)
+
+
+# ============================ ОБРАБОТЧИК ПАГИНАЦИИ ============================
+
+# Обработчик для пагинации оборудования сотрудника
+_employee_pagination_handler = PaginationHandler(
+    page_key=StorageKeys.DB_VIEW_PAGE,
+    items_key=StorageKeys.DB_VIEW_RESULTS,
+    items_per_page=PaginationConfig().employee_items_per_page,
+    callback_prefix='emp'
+)
 
 
 @require_user_access
@@ -100,9 +111,9 @@ async def find_by_employee_input(update: Update, context: ContextTypes.DEFAULT_T
             db.close_connection()
             return ConversationHandler.END
         
-        # Сохраняем результаты для пагинации
-        context.user_data[StorageKeys.DB_VIEW_RESULTS] = equipment_list
-        context.user_data[StorageKeys.DB_VIEW_PAGE] = 0
+        # Сохраняем результаты для пагинации через PaginationHandler
+        _employee_pagination_handler.set_items(context, equipment_list)
+        _employee_pagination_handler.reset_pagination(context)
         context.user_data['employee_name'] = employee_name
         
         # Отображаем первую страницу
@@ -122,33 +133,26 @@ async def find_by_employee_input(update: Update, context: ContextTypes.DEFAULT_T
 async def show_employee_equipment_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Отображает страницу с оборудованием сотрудника
-    
+
     Параметры:
         update: Объект обновления от Telegram API
         context: Контекст выполнения
     """
-    equipment_list = context.user_data.get(StorageKeys.DB_VIEW_RESULTS, [])
-    current_page = context.user_data.get(StorageKeys.DB_VIEW_PAGE, 0)
+    equipment_list = _employee_pagination_handler.get_items(context)
     employee_name = context.user_data.get('employee_name', 'Неизвестный')
-    
-    config = PaginationConfig()
-    
-    # Пагинация
-    page_items, total_pages, has_prev, has_next = paginate_results(
-        equipment_list, 
-        current_page, 
-        config.employee_items_per_page
-    )
-    
+
+    # Пагинация через PaginationHandler
+    page_items, current_page, total_pages, has_prev, has_next = _employee_pagination_handler.get_page_data(context)
+
     # Формируем сообщение
     message_lines = [
         f"👤 <b>Сотрудник:</b> {employee_name}",
         f"📋 <b>Найдено единиц:</b> {len(equipment_list)}",
         f"📄 <b>Страница:</b> {current_page + 1} из {total_pages}\n"
     ]
-    
+
     for i, equipment in enumerate(page_items, 1):
-        item_num = current_page * config.employee_items_per_page + i
+        item_num = current_page * _employee_pagination_handler.items_per_page + i
         message_lines.append(f"<b>{item_num}.</b>")
         message_lines.append(format_equipment_info(equipment))
         message_lines.append("")  # Пустая строка между единицами
@@ -210,22 +214,12 @@ async def handle_employee_pagination(update: Update, context: ContextTypes.DEFAU
     callback_data = query.data
     
     if callback_data == "emp_prev":
-        current_page = context.user_data.get(StorageKeys.DB_VIEW_PAGE, 0)
-        if current_page > 0:
-            context.user_data[StorageKeys.DB_VIEW_PAGE] = current_page - 1
+        _employee_pagination_handler.handle_navigation(update, context, 'prev')
         await show_employee_equipment_page(update, context)
         return States.EMPLOYEE_PAGINATION
-    
+
     elif callback_data == "emp_next":
-        equipment_list = context.user_data.get(StorageKeys.DB_VIEW_RESULTS, [])
-        current_page = context.user_data.get(StorageKeys.DB_VIEW_PAGE, 0)
-        
-        config = PaginationConfig()
-        items_per_page = config.employee_items_per_page
-        total_pages = (len(equipment_list) + items_per_page - 1) // items_per_page
-        
-        if current_page < total_pages - 1:
-            context.user_data[StorageKeys.DB_VIEW_PAGE] = current_page + 1
+        _employee_pagination_handler.handle_navigation(update, context, 'next')
         await show_employee_equipment_page(update, context)
         return States.EMPLOYEE_PAGINATION
     
@@ -363,7 +357,7 @@ async def handle_employee_export_delivery(update: Update, context: ContextTypes.
                     logger.info(f"Email сотрудника '{employee_name}': {employee_email}")
                     
                     # Отправляем на найденный email
-                    from email_sender import send_export_email
+                    from bot.email_sender import send_export_email
                     
                     files_dict = {'equipment': excel_path}
                     success = send_export_email(
@@ -440,7 +434,7 @@ async def handle_employee_export_email_input(update: Update, context: ContextTyp
         int: ConversationHandler.END
     """
     import re
-    from email_sender import send_export_email
+    from bot.email_sender import send_export_email
     
     email = update.message.text.strip()
     
@@ -496,23 +490,22 @@ async def handle_employee_export_email_input(update: Update, context: ContextTyp
 async def export_employee_equipment_to_excel(employee_name: str, equipment_list: list, context: ContextTypes.DEFAULT_TYPE) -> str:
     """
     Экспортирует оборудование сотрудника в Excel
-    
+
     Параметры:
         employee_name: ФИО сотрудника
         equipment_list: Список оборудования
         context: Контекст выполнения
-        
+
     Возвращает:
         str: Путь к созданному файлу или None при ошибке
     """
     import pandas as pd
     from pathlib import Path
     from datetime import datetime
-    
+
+    from bot.services.excel_service import SimpleExcelExporter
+
     try:
-        # Создаем директорию если не существует
-        Path("exports").mkdir(exist_ok=True)
-        
         # Подготавливаем данные для DataFrame
         data = []
         for item in equipment_list:
@@ -527,22 +520,27 @@ async def export_employee_equipment_to_excel(employee_name: str, equipment_list:
                 'Описание': item.get('DESCRIPTION', '')
             }
             data.append(row)
-        
+
         # Создаем DataFrame
         df = pd.DataFrame(data)
-        
+
         # Создаем имя файла
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         safe_name = "".join(c for c in employee_name if c.isalnum() or c in (' ', '-', '_')).strip()
         filename = f"equipment_{safe_name}_{timestamp}.xlsx"
         output_file = f"exports/{filename}"
-        
-        # Сохраняем в Excel
-        df.to_excel(output_file, index=False, engine='openpyxl')
-        
+
+        # Создаем экспортер и экспортируем
+        exporter = SimpleExcelExporter()
+        exporter.export_dataframe(
+            df=df,
+            output_file=output_file,
+            title=f"Оборудование сотрудника: {employee_name}"
+        )
+
         logger.info(f"Экспорт оборудования сотрудника '{employee_name}' завершен: {output_file}")
         return output_file
-        
+
     except Exception as e:
         logger.error(f"Ошибка экспорта оборудования сотрудника: {e}")
         return None
@@ -598,9 +596,9 @@ async def handle_employee_search_suggestion(update: Update, context: ContextType
                     db.close_connection()
                     return ConversationHandler.END
                 
-                # Сохраняем результаты
-                context.user_data[StorageKeys.DB_VIEW_RESULTS] = equipment_list
-                context.user_data[StorageKeys.DB_VIEW_PAGE] = 0
+                # Сохраняем результаты через PaginationHandler
+                _employee_pagination_handler.set_items(context, equipment_list)
+                _employee_pagination_handler.reset_pagination(context)
                 context.user_data['employee_name'] = selected_name
                 
                 # Создаем временный update для show_employee_equipment_page
@@ -648,9 +646,9 @@ async def handle_employee_search_suggestion(update: Update, context: ContextType
             db.close_connection()
             return ConversationHandler.END
         
-        # Сохраняем результаты
-        context.user_data[StorageKeys.DB_VIEW_RESULTS] = equipment_list
-        context.user_data[StorageKeys.DB_VIEW_PAGE] = 0
+        # Сохраняем результаты через PaginationHandler
+        _employee_pagination_handler.set_items(context, equipment_list)
+        _employee_pagination_handler.reset_pagination(context)
         context.user_data['employee_name'] = pending
         
         # Создаем временный update

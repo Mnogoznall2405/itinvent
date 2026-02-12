@@ -99,6 +99,10 @@ class PrinterComponentDetector:
                 components["fuser"] = True
             elif comp in ["photoconductor", "photoconductor_models", "drum"]:
                 components["photoconductor"] = True
+            elif comp in ["waste_toner", "waste_toner_models"]:
+                components["waste_toner"] = True
+            elif comp in ["transfer_belt", "transfer_belt_models"]:
+                components["transfer_belt"] = True
 
         # Формируем список доступных компонентов
         component_list = [comp for comp, available in components.items() if available]
@@ -120,6 +124,16 @@ class PrinterComponentDetector:
             llm_components["photoconductor"] = {
                 "available": True,
                 "compatible_models": cartridge_data["photoconductor_models"]
+            }
+        if cartridge_data.get("waste_toner_models"):
+            llm_components["waste_toner"] = {
+                "available": True,
+                "compatible_models": cartridge_data["waste_toner_models"]
+            }
+        if cartridge_data.get("transfer_belt_models"):
+            llm_components["transfer_belt"] = {
+                "available": True,
+                "compatible_models": cartridge_data["transfer_belt_models"]
             }
 
         result = {

@@ -20,7 +20,7 @@ import os
 import logging
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
-from universal_database import UniversalInventoryDB, DatabaseConfig
+from bot.universal_database import UniversalInventoryDB, DatabaseConfig
 
 logger = logging.getLogger(__name__)
 
@@ -51,16 +51,19 @@ class DatabaseManager:
     def __init__(self):
         """
         Инициализация менеджера баз данных
-        
+
         Загружает конфигурации всех доступных баз данных из переменных окружения.
         """
         self.databases: Dict[str, DatabaseInfo] = {}
         self.user_selected_db: Dict[int, str] = {}  # user_id -> database_name
+        self.user_assigned_db: Dict[int, str] = {}  # user_id -> назначенная база (только чтение)
         # Файл для хранения выборов пользователей
         self.user_selection_file = "data/user_db_selection.json"
+        # Загружаем администраторов с доступом ко всем базам
+        self.admin_user_ids = self._load_admin_users()
         self._load_database_configs()
-        # Загружаем сохранённые выборы пользователей при старте
-        self._load_user_selections()
+        # Загружаем назначенные базы пользователей
+        self._load_user_assignations()
     
     def _load_database_configs(self):
         """
@@ -121,6 +124,41 @@ class DatabaseManager:
                 logger.warning(f"Не удалось загрузить базу данных {db_name}: отсутствуют параметры подключения (host={host}, database={database}, username={username}, password={'***' if password else None})")
         
         logger.info(f"Загружено {len(self.databases)} баз данных: {list(self.databases.keys())}")
+
+    def _load_admin_users(self) -> set:
+        """
+        Загружает ID администраторов из переменной окружения
+
+        Возвращает:
+            set: Множество ID администраторов
+        """
+        try:
+            import os
+            admin_ids_str = os.getenv('ADMIN_USER_IDS', '')
+            if admin_ids_str:
+                admin_ids = set()
+                for id_str in admin_ids_str.split(','):
+                    try:
+                        admin_ids.add(int(id_str.strip()))
+                    except ValueError:
+                        continue
+                logger.info(f"Загружены администраторы: {admin_ids}")
+                return admin_ids
+        except Exception as e:
+            logger.warning(f"Ошибка при загрузке администраторов: {e}")
+        return set()
+
+    def is_admin_user(self, user_id: int) -> bool:
+        """
+        Проверяет, является ли пользователь администратором
+
+        Параметры:
+            user_id (int): ID пользователя Telegram
+
+        Возвращает:
+            bool: True если пользователь администратор
+        """
+        return user_id in self.admin_user_ids
     
     def get_available_databases(self) -> List[str]:
         """
@@ -153,17 +191,37 @@ class DatabaseManager:
         db_info = self.databases.get(db_name)
         return db_info.config if db_info else None
     
+    def get_user_assigned_database(self, user_id: int) -> Optional[str]:
+        """
+        Получает назначенную базу данных для пользователя (только чтение)
+
+        Параметры:
+            user_id (int): ID пользователя Telegram
+
+        Возвращает:
+            Optional[str]: Название назначенной базы данных или None
+        """
+        return self.user_assigned_db.get(user_id)
+
     def set_user_database(self, user_id: int, db_name: str) -> bool:
         """
         Устанавливает активную базу данных для пользователя
-        
+
         Параметры:
             user_id (int): ID пользователя Telegram
             db_name (str): Название базы данных
-            
+
         Возвращает:
             bool: True если база данных установлена успешно
         """
+        # Админы могут переключаться между всеми базами
+        if not self.is_admin_user(user_id):
+            # Проверяем: обычный пользователь может работать только в своей назначенной базе
+            assigned_db = self.user_assigned_db.get(user_id)
+            if assigned_db and db_name != assigned_db:
+                logger.warning(f"Пользователь {user_id} пытается переключиться на {db_name}, но назначен на {assigned_db}")
+                return False
+
         if db_name in self.databases:
             self.user_selected_db[user_id] = db_name
             # Сохраняем выбор пользователя на диск
@@ -303,6 +361,29 @@ class DatabaseManager:
         for db_name in self.databases.keys():
             stats.append(self.get_database_statistics(db_name))
         return stats
+
+    def _load_user_assignations(self):
+        """Загружает назначенные базы пользователей из файла user_db_selection.json."""
+        try:
+            import json
+            with open(self.user_selection_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                for k, v in data.items():
+                    try:
+                        uid = int(k)
+                    except Exception:
+                        continue
+                    # Сохраняем назначенную базу (только чтение)
+                    self.user_assigned_db[uid] = v
+                    # Также устанавливаем как текущую по умолчанию
+                    self.user_selected_db[uid] = v
+            logger.info(f"Загружены назначения баз для {len(self.user_assigned_db)} пользователей")
+        except FileNotFoundError:
+            # Файл отсутствует — это нормально при первом запуске
+            logger.warning(f"Файл {self.user_selection_file} не найден")
+        except Exception as e:
+            logger.warning(f"Не удалось загрузить назначения баз пользователей: {e}")
 
     def _load_user_selections(self):
         """Загружает сохранённые выборы БД пользователей из файла."""

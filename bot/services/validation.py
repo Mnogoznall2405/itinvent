@@ -109,28 +109,30 @@ def validate_ip_address(ip: str) -> bool:
 def validate_inventory_number(inv_num: str) -> bool:
     """
     Валидация инвентарного номера
-    
+
     Параметры:
         inv_num: Инвентарный номер
-        
+
     Возвращает:
         bool: True если инвентарный номер валиден
     """
     if not inv_num or not isinstance(inv_num, str):
         return False
-    
+
     inv_num = inv_num.strip()
-    
+
     # Проверка длины
     if len(inv_num) < 1 or len(inv_num) > 30:
         logger.warning(f"Инвентарный номер имеет некорректную длину: {len(inv_num)}")
         return False
-    
-    # Разрешаем буквы, цифры, дефис, подчёркивание, точку и пробел
-    if not re.match(r'^[a-zA-Z0-9._\- ]+$', inv_num):
-        logger.warning(f"Инвентарный номер содержит недопустимые символы: {inv_num}")
+
+    # Убрана проверка на символы - разрешаем кириллицу и любые символы
+    # Проверяем только на опасные символы
+    dangerous_chars = ['<', '>', '"', "'", '&', ';', '|', '`', '\n', '\r']
+    if any(char in inv_num for char in dangerous_chars):
+        logger.warning(f"Инвентарный номер содержит опасные символы: {inv_num}")
         return False
-    
+
     return True
 
 

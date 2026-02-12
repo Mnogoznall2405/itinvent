@@ -30,7 +30,7 @@ class APIConfig:
     openrouter_api_key: str
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     ocr_model: str = "qwen/qwen3-vl-8b-instruct"
-    cartridge_analysis_model: str = "anthropic/claude-3.5-sonnet"
+    cartridge_analysis_model: str = "google/gemini-3-flash-preview"
 
 
 @dataclass
@@ -89,6 +89,7 @@ class States:
     TRANSFER_NEW_LOCATION = 31
     TRANSFER_CONFIRMATION = 18
     UNFOUND_CONFIRMATION = 19
+    UNFOUND_EMPLOYEE_CONFIRMATION = 39
     WORK_TYPE_SELECTION = 20
     WORK_BRANCH_INPUT = 21
     WORK_LOCATION_INPUT = 22
@@ -101,6 +102,9 @@ class States:
     WORK_BATTERY_CONFIRMATION = 33
     WORK_PC_CLEANING_SERIAL_INPUT = 34
     WORK_PC_CLEANING_CONFIRMATION = 35
+    WORK_COMPONENT_SERIAL_INPUT = 37
+    WORK_COMPONENT_CONFIRMATION = 38
+    WORK_SUCCESS = 36
 
 
 # Текстовые константы

@@ -18,6 +18,16 @@ from .ocr_service import (
     extract_model,
     clean_serial_number
 )
+from .excel_service import (
+    BaseExcelExporter,
+    GroupedExcelExporter,
+    DatabaseExcelExporter,
+    SimpleExcelExporter,
+    ExcelStyles,
+    ColumnWidth,
+    filter_data_by_period,
+    count_excel_records
+)
 
 __all__ = [
     # Validation
@@ -32,4 +42,12 @@ __all__ = [
     'extract_serial_from_image',
     'extract_model',
     'clean_serial_number',
+    # Excel Export
+    'BaseExcelExporter',
+    'GroupedExcelExporter',
+    'DatabaseExcelExporter',
+    'ExcelStyles',
+    'ColumnWidth',
+    'filter_data_by_period',
+    'count_excel_records',
 ]

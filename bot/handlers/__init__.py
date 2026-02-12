@@ -11,6 +11,12 @@ from .employee import (
     find_by_employee_input,
     handle_employee_pagination
 )
+from .location import (
+    show_location_buttons,
+    handle_location_navigation_universal,
+    _unfound_location_pagination_handler,
+    _transfer_location_pagination_handler
+)
 from .unfound import (
     start_unfound_equipment,
     unfound_employee_input,
@@ -23,7 +29,9 @@ from .unfound import (
     unfound_status_input,
     unfound_branch_input,
     handle_unfound_confirmation,
-    handle_skip_callback
+    handle_skip_callback,
+    handle_create_new_employee,
+    handle_retry_employee_input
 )
 from .transfer import (
     start_transfer,
@@ -33,7 +41,8 @@ from .transfer import (
     receive_transfer_location,
     handle_transfer_branch_callback,
     handle_transfer_location_callback,
-    handle_transfer_confirmation
+    handle_transfer_confirmation,
+    handle_employee_suggestion_callback
 )
 from .database import (
     show_database_menu,
@@ -57,7 +66,14 @@ from .work import (
     save_battery_replacement,
     work_pc_cleaning_serial_input,
     show_pc_cleaning_confirmation,
-    save_pc_cleaning
+    save_pc_cleaning,
+    work_component_serial_input,
+    show_component_selection_pc,
+    handle_pc_component_selection,
+    save_component_replacement_pc,
+    handle_restart_work,
+    handle_back_to_main_external,
+    handle_work_success_action
 )
 
 __all__ = [
@@ -73,6 +89,11 @@ __all__ = [
     'ask_find_by_employee',
     'find_by_employee_input',
     'handle_employee_pagination',
+    # Location handlers (universal)
+    'show_location_buttons',
+    'handle_location_navigation_universal',
+    '_unfound_location_pagination_handler',
+    '_transfer_location_pagination_handler',
     # Unfound equipment handlers
     'start_unfound_equipment',
     'unfound_employee_input',
@@ -86,6 +107,8 @@ __all__ = [
     'unfound_branch_input',
     'handle_unfound_confirmation',
     'handle_skip_callback',
+    'handle_create_new_employee',
+    'handle_retry_employee_input',
     # Transfer handlers
     'start_transfer',
     'receive_transfer_photos',
@@ -95,6 +118,7 @@ __all__ = [
     'handle_transfer_branch_callback',
     'handle_transfer_location_callback',
     'handle_transfer_confirmation',
+    'handle_employee_suggestion_callback',
     # Database handlers
     'show_database_menu',
     'handle_database_callback',
@@ -116,4 +140,11 @@ __all__ = [
     'work_pc_cleaning_serial_input',
     'show_pc_cleaning_confirmation',
     'save_pc_cleaning',
+    'work_component_serial_input',
+    'show_component_selection_pc',
+    'handle_pc_component_selection',
+    'save_component_replacement_pc',
+    'handle_restart_work',
+    'handle_back_to_main_external',
+    'handle_work_success_action',
 ]

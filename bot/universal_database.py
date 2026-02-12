@@ -22,6 +22,7 @@ import pyodbc
 import logging
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
+from datetime import datetime
 
 # Настройка логирования для отслеживания операций с базой данных
 logger = logging.getLogger(__name__)
@@ -61,6 +62,7 @@ class DatabaseConfig:
             f"UID={self.username};"
             f"PWD={self.password};"
             "TrustServerCertificate=yes;"
+            "autocommit=True;"
         )
 
 class UniversalInventoryDB:
@@ -185,17 +187,18 @@ class UniversalInventoryDB:
             else:
                 raise e
     
-    def find_by_serial_number(self, serial_number: str) -> Dict[str, Any]:
+    def find_by_serial_number(self, serial_number: str, try_variants: bool = True) -> Dict[str, Any]:
         """
         Поиск оборудования по серийному номеру
-        
+
         Выполняет поиск единицы оборудования в базе данных по серийному номеру.
         Возвращает полную информацию об оборудовании, включая тип, модель,
         местоположение, ответственного сотрудника и финансовые данные.
-        
+
         Параметры:
             serial_number (str): Серийный номер оборудования для поиска
-            
+            try_variants (bool): Если True, пробует варианты O↔0 при отсутствии результата
+
         Возвращает:
             Dict[str, Any]: Словарь с информацией об оборудовании или пустой словарь,
                            если оборудование не найдено. Включает поля:
@@ -292,13 +295,32 @@ class UniversalInventoryDB:
                 # Преобразуем результат в словарь для удобства работы
                 columns = [column[0] for column in cursor.description]
                 result = dict(zip(columns, row))
-                
+
                 logger.info(f"Найдено оборудование с серийным номером: {serial_number}")
                 return result
             else:
                 logger.info(f"Оборудование с серийным номером {serial_number} не найдено")
+
+                # Пробуем варианты с заменой O↔0 если включено
+                if try_variants:
+                    from bot.services.ocr_service import generate_serial_variants
+                    variants = generate_serial_variants(serial_number)
+
+                    for variant in variants:
+                        if variant != serial_number:
+                            logger.info(f"Пробуем вариант: {variant}")
+                            row = self._execute_query_with_location_fallback(
+                                cursor, query_with_location, query_without_location, (variant, variant)
+                            )
+
+                            if row:
+                                columns = [column[0] for column in cursor.description]
+                                result = dict(zip(columns, row))
+                                logger.info(f"✅ Найдено по варианту: {variant} (оригинал: {serial_number})")
+                                return result
+
                 return {}
-                
+
         except Exception as e:
             logger.error(f"Ошибка при поиске по серийному номеру {serial_number}: {e}")
             raise
@@ -748,6 +770,239 @@ class UniversalInventoryDB:
         except Exception as e:
             logger.error(f"Ошибка при получении OWNER_EMAIL для сотрудника '{employee_name}': {e}")
             return None
+
+    def get_owner_no_by_name(self, employee_name: str, strict: bool = True) -> Optional[int]:
+        """
+        Возвращает OWNER_NO (EMPL_NO) для указанного сотрудника по имени.
+
+        Параметры:
+            employee_name: ФИО сотрудника
+            strict: Если True - точное совпадение, иначе LIKE
+
+        Возвращает:
+            int: OWNER_NO или None если не найден
+        """
+        where_clause = "OWNER_DISPLAY_NAME = ?" if strict else "OWNER_DISPLAY_NAME LIKE ?"
+        param = employee_name if strict else f"%{employee_name}%"
+        sql = f"""
+            SELECT TOP 1 OWNER_NO
+            FROM OWNERS
+            WHERE {where_clause}
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(sql, (param,))
+                row = cursor.fetchone()
+                if row and row[0] is not None:
+                    return int(row[0])
+                return None
+        except Exception as e:
+            logger.error(f"Ошибка при получении OWNER_NO для '{employee_name}': {e}")
+            return None
+
+    def _parse_fio(self, full_name: str) -> tuple:
+        """
+        Разбивает полное ФИО на компоненты
+
+        Параметры:
+            full_name: Полное ФИО (например, "Иванов Иван Иванович")
+
+        Возвращает:
+            tuple: (last_name, first_name, middle_name)
+        """
+        parts = full_name.strip().split()
+        if len(parts) >= 3:
+            return parts[0], parts[1], parts[2]  # Фамилия, Имя, Отчество
+        elif len(parts) == 2:
+            return parts[0], parts[1], ''  # Фамилия, Имя (без отчества)
+        else:
+            return full_name, '', ''  # Только фамилия или одно слово
+
+    def create_owner(self, employee_name: str, department: str = None) -> Optional[int]:
+        """
+        Создает новую запись в таблице OWNERS и возвращает OWNER_NO
+
+        Параметры:
+            employee_name: ФИО сотрудника
+            department: Отдел (опционально)
+
+        Возвращает:
+            int: Созданный OWNER_NO или None в случае ошибки
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Получаем следующий OWNER_NO
+                cursor.execute("SELECT ISNULL(MAX(OWNER_NO), 0) + 1 FROM OWNERS")
+                next_owner_no = cursor.fetchone()[0]
+
+                # Разбиваем ФИО на компоненты
+                last_name, first_name, middle_name = self._parse_fio(employee_name)
+
+                # Вставляем новую запись с полными данными
+                cursor.execute("""
+                    INSERT INTO OWNERS (
+                        OWNER_NO, OWNER_LNAME, OWNER_FNAME, OWNER_MNAME,
+                        OWNER_DISPLAY_NAME, OWNER_DEPT
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (next_owner_no, last_name, first_name, middle_name,
+                      employee_name, department or ''))
+
+                conn.commit()
+                logger.info(
+                    f"Создан новый владелец: OWNER_NO={next_owner_no}, "
+                    f"NAME={employee_name}, DEPT={department}, "
+                    f"LNAME={last_name}, FNAME={first_name}, MNAME={middle_name}"
+                )
+                return next_owner_no
+
+        except Exception as e:
+            logger.error(f"Ошибка при создании владельца '{employee_name}': {e}", exc_info=True)
+            return None
+
+    def _parse_vendor_from_model(self, model_name: str) -> str:
+        """
+        Извлекает vendor из полного названия модели
+
+        Параметры:
+            model_name: Полное название модели (например "Kyocera FS-1135MFP")
+
+        Возвращает:
+            Название производителя (первое слово)
+        """
+        if not model_name:
+            return "Unknown"
+
+        parts = model_name.strip().split(None, 1)
+        return parts[0] if parts else "Unknown"
+
+    def get_or_create_vendor(self, vendor_name: str) -> Optional[int]:
+        """
+        Находит или создаёт vendor в таблице VENDORS
+
+        Параметры:
+            vendor_name: Название производителя
+
+        Возвращает:
+            VENDOR_NO или None в случае ошибки
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Сначала ищем существующий vendor
+                cursor.execute("""
+                    SELECT TOP 1 VENDOR_NO
+                    FROM VENDORS
+                    WHERE VENDOR_NAME = ?
+                """, (vendor_name,))
+                row = cursor.fetchone()
+                if row and row[0] is not None:
+                    return int(row[0])
+
+                # Если не найден, создаём нового
+                cursor.execute("SELECT ISNULL(MAX(VENDOR_NO), 0) + 1 FROM VENDORS")
+                next_vendor_no = cursor.fetchone()[0]
+
+                cursor.execute("""
+                    INSERT INTO VENDORS (VENDOR_NO, VENDOR_NAME)
+                    VALUES (?, ?)
+                """, (next_vendor_no, vendor_name))
+
+                conn.commit()
+                logger.info(f"Создан новый производитель: VENDOR_NO={next_vendor_no}, NAME={vendor_name}")
+                return next_vendor_no
+
+        except Exception as e:
+            logger.error(f"Ошибка при создании производителя '{vendor_name}': {e}", exc_info=True)
+            return None
+
+    def get_vendor_no_by_name(self, vendor_name: str) -> Optional[int]:
+        """
+        Ищет VENDOR_NO по имени производителя
+
+        Параметры:
+            vendor_name: Название производителя
+
+        Возвращает:
+            VENDOR_NO или None если не найден
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT TOP 1 VENDOR_NO
+                    FROM VENDORS
+                    WHERE VENDOR_NAME = ?
+                """, (vendor_name,))
+                row = cursor.fetchone()
+                if row and row[0] is not None:
+                    return int(row[0])
+                return None
+        except Exception as e:
+            logger.error(f"Ошибка при поиске VENDOR_NO для '{vendor_name}': {e}")
+            return None
+
+    def create_model(self, model_name: str, type_no: int, ci_type: int = 1) -> Optional[int]:
+        """
+        Создаёт новую запись в таблице CI_MODELS
+
+        Параметры:
+            model_name: Название модели (например "Kyocera FS-1135MFP")
+            type_no: TYPE_NO (тип оборудования - обязателен!)
+            ci_type: Тип CI (по умолчанию 1 для IT-оборудования)
+
+        Возвращает:
+            MODEL_NO или None в случае ошибки
+        """
+        try:
+            # Извлекаем первое слово как возможный vendor
+            parts = model_name.strip().split(None, 1)
+            vendor_name = parts[0] if parts else None
+
+            # Ищем vendor в базе
+            vendor_no = None
+            if vendor_name:
+                vendor_no = self.get_vendor_no_by_name(vendor_name)
+                if vendor_no:
+                    logger.info(f"Найден существующий vendor: {vendor_name} (VENDOR_NO={vendor_no})")
+                else:
+                    logger.info(f"Vendor '{vendor_name}' не найден в базе, создаём модель без VENDOR_NO")
+
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Получаем следующий MODEL_NO
+                cursor.execute("SELECT ISNULL(MAX(MODEL_NO), 0) + 1 FROM CI_MODELS")
+                next_model_no = cursor.fetchone()[0]
+
+                if vendor_no:
+                    # Вставляем с VENDOR_NO
+                    cursor.execute("""
+                        INSERT INTO CI_MODELS (MODEL_NO, CI_TYPE, TYPE_NO, MODEL_NAME, VENDOR_NO)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (next_model_no, ci_type, type_no, model_name, vendor_no))
+                else:
+                    # Вставляем без VENDOR_NO
+                    cursor.execute("""
+                        INSERT INTO CI_MODELS (MODEL_NO, CI_TYPE, TYPE_NO, MODEL_NAME)
+                        VALUES (?, ?, ?, ?)
+                    """, (next_model_no, ci_type, type_no, model_name))
+
+                conn.commit()
+                logger.info(
+                    f"Создана новая модель: MODEL_NO={next_model_no}, "
+                    f"NAME={model_name}, CI_TYPE={ci_type}, TYPE_NO={type_no}, VENDOR_NO={vendor_no}"
+                )
+                return next_model_no
+
+        except Exception as e:
+            logger.error(f"Ошибка при создании модели '{model_name}': {e}", exc_info=True)
+            return None
+
     def get_equipment_statistics(self) -> Dict[str, Any]:
         """
         Получение статистики по оборудованию
@@ -1029,7 +1284,623 @@ class UniversalInventoryDB:
         except Exception as e:
             logger.error(f"Ошибка при получении списка филиалов: {e}")
             return []
-    
+
+    def get_branch_no_by_name(self, branch_name: str) -> Optional[int]:
+        """
+        Возвращает BRANCH_NO по названию филиала
+
+        Параметры:
+            branch_name: Название филиала
+
+        Возвращает:
+            int: BRANCH_NO или None если не найден
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                query = """
+                    SELECT TOP 1 BRANCH_NO
+                    FROM BRANCHES
+                    WHERE BRANCH_NAME = ?
+                """
+                cursor.execute(query, (branch_name,))
+                row = cursor.fetchone()
+                if row and row[0] is not None:
+                    return int(row[0])
+                return None
+        except Exception as e:
+            logger.error(f"Ошибка при получении BRANCH_NO для '{branch_name}': {e}")
+            return None
+
+    def get_loc_no_by_descr(self, location_descr: str) -> Optional[int]:
+        """
+        Возвращает LOC_NO по описанию локации (DESCR)
+
+        Параметры:
+            location_descr: Описание локации (DESCR из таблицы LOCATIONS)
+
+        Возвращает:
+            int: LOC_NO или None если не найден
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                query = """
+                    SELECT TOP 1 LOC_NO
+                    FROM LOCATIONS
+                    WHERE DESCR = ?
+                """
+                cursor.execute(query, (location_descr,))
+                row = cursor.fetchone()
+                if row and row[0] is not None:
+                    return int(row[0])
+                return None
+        except Exception as e:
+            logger.error(f"Ошибка при получении LOC_NO для '{location_descr}': {e}")
+            return None
+
+    def get_type_no_by_name(self, type_name: str, ci_type: int = 2, strict: bool = True) -> Optional[int]:
+        """
+        Получает TYPE_NO по имени типа оборудования
+
+        Параметры:
+            type_name: Имя типа оборудования
+            ci_type: Тип CI (по умолчанию 2 для IT-оборудования)
+            strict: Строгое совпадение (True) или поиск по подстроке (False)
+
+        Возвращает:
+            TYPE_NO или None, если тип не найден
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Сначала пробуем точное совпадение в указанном CI_TYPE
+                query = """
+                    SELECT TOP 1 TYPE_NO
+                    FROM CI_TYPES
+                    WHERE CI_TYPE = ? AND TYPE_NAME = ?
+                """
+                cursor.execute(query, (ci_type, type_name))
+                row = cursor.fetchone()
+                if row and row[0] is not None:
+                    return int(row[0])
+
+                # Если не найдено и strict=False, пробуем LIKE в указанном CI_TYPE
+                if not strict:
+                    query = """
+                        SELECT TOP 1 TYPE_NO
+                        FROM CI_TYPES
+                        WHERE CI_TYPE = ? AND TYPE_NAME LIKE ?
+                    """
+                    cursor.execute(query, (ci_type, f"%{type_name}%"))
+                    row = cursor.fetchone()
+                    if row and row[0] is not None:
+                        logger.info(f"Найден TYPE_NO по подстроке для '{type_name}' в CI_TYPE={ci_type}")
+                        return int(row[0])
+
+                # Если всё ещё не найдено, пробуем во всех CI_TYPE (точное совпадение)
+                query = """
+                    SELECT TOP 1 TYPE_NO, CI_TYPE
+                    FROM CI_TYPES
+                    WHERE TYPE_NAME = ?
+                """
+                cursor.execute(query, (type_name,))
+                row = cursor.fetchone()
+                if row and row[0] is not None:
+                    logger.info(f"Найден TYPE_NO в другом CI_TYPE={row[1]} для '{type_name}'")
+                    return int(row[0])
+
+                # Если strict=False, пробуем LIKE во всех CI_TYPE
+                if not strict:
+                    query = """
+                        SELECT TOP 1 TYPE_NO, CI_TYPE
+                        FROM CI_TYPES
+                        WHERE TYPE_NAME LIKE ?
+                    """
+                    cursor.execute(query, (f"%{type_name}%",))
+                    row = cursor.fetchone()
+                    if row and row[0] is not None:
+                        logger.info(f"Найден TYPE_NO по подстроке в другом CI_TYPE={row[1]} для '{type_name}'")
+                        return int(row[0])
+
+                return None
+        except Exception as e:
+            logger.error(f"Ошибка при получении TYPE_NO для '{type_name}': {e}")
+            return None
+
+    def get_model_no_by_name(self, model_name: str, ci_type: int = 2, strict: bool = True) -> Optional[int]:
+        """
+        Получает MODEL_NO по имени модели оборудования
+
+        Параметры:
+            model_name: Имя модели оборудования
+            ci_type: Тип CI (по умолчанию 2 для IT-оборудования)
+            strict: Строгое совпадение (True) или поиск по подстроке (False)
+
+        Возвращает:
+            MODEL_NO или None, если модель не найдена
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Сначала пробуем точное совпадение в указанном CI_TYPE
+                query = """
+                    SELECT TOP 1 MODEL_NO
+                    FROM CI_MODELS
+                    WHERE CI_TYPE = ? AND MODEL_NAME = ?
+                """
+                cursor.execute(query, (ci_type, model_name))
+                row = cursor.fetchone()
+                if row and row[0] is not None:
+                    return int(row[0])
+
+                # Если не найдено и strict=False, пробуем LIKE в указанном CI_TYPE
+                if not strict:
+                    query = """
+                        SELECT TOP 1 MODEL_NO
+                        FROM CI_MODELS
+                        WHERE CI_TYPE = ? AND MODEL_NAME LIKE ?
+                    """
+                    cursor.execute(query, (ci_type, f"%{model_name}%"))
+                    row = cursor.fetchone()
+                    if row and row[0] is not None:
+                        logger.info(f"Найден MODEL_NO по подстроке для '{model_name}' в CI_TYPE={ci_type}")
+                        return int(row[0])
+
+                # Если всё ещё не найдено, пробуем во всех CI_TYPE (точное совпадение)
+                query = """
+                    SELECT TOP 1 MODEL_NO, CI_TYPE
+                    FROM CI_MODELS
+                    WHERE MODEL_NAME = ?
+                """
+                cursor.execute(query, (model_name,))
+                row = cursor.fetchone()
+                if row and row[0] is not None:
+                    logger.info(f"Найден MODEL_NO в другом CI_TYPE={row[1]} для '{model_name}'")
+                    return int(row[0])
+
+                # Если strict=False, пробуем LIKE во всех CI_TYPE
+                if not strict:
+                    query = """
+                        SELECT TOP 1 MODEL_NO, CI_TYPE
+                        FROM CI_MODELS
+                        WHERE MODEL_NAME LIKE ?
+                    """
+                    cursor.execute(query, (f"%{model_name}%",))
+                    row = cursor.fetchone()
+                    if row and row[0] is not None:
+                        logger.info(f"Найден MODEL_NO по подстроке в другом CI_TYPE={row[1]} для '{model_name}'")
+                        return int(row[0])
+
+                return None
+        except Exception as e:
+            logger.error(f"Ошибка при получении MODEL_NO для '{model_name}': {e}")
+            return None
+
+    def get_status_no_by_name(self, status_descr: str, strict: bool = True) -> Optional[int]:
+        """
+        Получает STATUS_NO по описанию статуса
+
+        Параметры:
+            status_descr: Описание статуса (DESCR)
+            strict: Строгое совпадение (True) или поиск по подстроке (False)
+
+        Возвращает:
+            STATUS_NO или None, если статус не найден
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Сначала пробуем точное совпадение
+                query = """
+                    SELECT TOP 1 STATUS_NO
+                    FROM STATUS
+                    WHERE DESCR = ?
+                """
+                cursor.execute(query, (status_descr,))
+                row = cursor.fetchone()
+                if row and row[0] is not None:
+                    return int(row[0])
+
+                # Если не найдено и strict=False, пробуем LIKE
+                if not strict:
+                    query = """
+                        SELECT TOP 1 STATUS_NO
+                        FROM STATUS
+                        WHERE DESCR LIKE ?
+                    """
+                    cursor.execute(query, (f"%{status_descr}%",))
+                    row = cursor.fetchone()
+                    if row and row[0] is not None:
+                        logger.info(f"Найден STATUS_NO по подстроке для '{status_descr}'")
+                        return int(row[0])
+
+                return None
+        except Exception as e:
+            logger.error(f"Ошибка при получении STATUS_NO для '{status_descr}': {e}")
+            return None
+
+    def get_default_type_no(self, ci_type: int = 2) -> Optional[int]:
+        """
+        Получает первый доступный TYPE_NO (дефолтный тип)
+
+        Параметры:
+            ci_type: Тип CI (по умолчанию 2 для IT-оборудования)
+
+        Возвращает:
+            TYPE_NO первого доступного типа или None
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                query = """
+                    SELECT TOP 1 TYPE_NO
+                    FROM CI_TYPES
+                    WHERE CI_TYPE = ?
+                    ORDER BY TYPE_NO
+                """
+                cursor.execute(query, (ci_type,))
+                row = cursor.fetchone()
+                if row and row[0] is not None:
+                    return int(row[0])
+                return None
+        except Exception as e:
+            logger.error(f"Ошибка при получении дефолтного TYPE_NO: {e}")
+            return None
+
+    def get_default_status_no(self) -> Optional[int]:
+        """
+        Получает первый доступный STATUS_NO (дефолтный статус)
+
+        Возвращает:
+            STATUS_NO первого доступного статуса или None
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                query = """
+                    SELECT TOP 1 STATUS_NO
+                    FROM STATUS
+                    ORDER BY STATUS_NO
+                """
+                cursor.execute(query)
+                row = cursor.fetchone()
+                if row and row[0] is not None:
+                    return int(row[0])
+                return None
+        except Exception as e:
+            logger.error(f"Ошибка при получении дефолтного STATUS_NO: {e}")
+            return None
+
+    def get_default_model_no(self, ci_type: int = 2) -> Optional[int]:
+        """
+        Получает первый доступный MODEL_NO (дефолтная модель)
+
+        Параметры:
+            ci_type: Тип CI (по умолчанию 2 для IT-оборудования)
+
+        Возвращает:
+            MODEL_NO первой доступной модели или None
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                query = """
+                    SELECT TOP 1 MODEL_NO
+                    FROM CI_MODELS
+                    WHERE CI_TYPE = ?
+                    ORDER BY MODEL_NO
+                """
+                cursor.execute(query, (ci_type,))
+                row = cursor.fetchone()
+                if row and row[0] is not None:
+                    return int(row[0])
+                # Если не найдено в указанном CI_TYPE, ищем в любом
+                cursor.execute("""
+                    SELECT TOP 1 MODEL_NO
+                    FROM CI_MODELS
+                    ORDER BY MODEL_NO
+                """)
+                row = cursor.fetchone()
+                if row and row[0] is not None:
+                    logger.info(f"Используем MODEL_NO из другого CI_TYPE")
+                    return int(row[0])
+                return None
+        except Exception as e:
+            logger.error(f"Ошибка при получении дефолтного MODEL_NO: {e}")
+            return None
+
+    def get_default_branch_no(self) -> Optional[int]:
+        """
+        Получает первый доступный BRANCH_NO (дефолтный филиал)
+
+        Возвращает:
+            BRANCH_NO первого доступного филиала или None
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                query = """
+                    SELECT TOP 1 BRANCH_NO
+                    FROM BRANCHES
+                    ORDER BY BRANCH_NO
+                """
+                cursor.execute(query)
+                row = cursor.fetchone()
+                if row and row[0] is not None:
+                    return int(row[0])
+                return None
+        except Exception as e:
+            logger.error(f"Ошибка при получении дефолтного BRANCH_NO: {e}")
+            return None
+
+    def get_default_loc_no(self) -> Optional[int]:
+        """
+        Получает первый доступный LOC_NO (дефолтное местоположение)
+
+        Возвращает:
+            LOC_NO первого доступного местоположения или None
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                query = """
+                    SELECT TOP 1 LOC_NO
+                    FROM LOCATIONS
+                    ORDER BY LOC_NO
+                """
+                cursor.execute(query)
+                row = cursor.fetchone()
+                if row and row[0] is not None:
+                    return int(row[0])
+                return None
+        except Exception as e:
+            logger.error(f"Ошибка при получении дефолтного LOC_NO: {e}")
+            return None
+
+    def add_equipment_to_items(
+        self,
+        serial_number: str,
+        model_name: str = None,
+        employee_name: str = None,
+        location_descr: str = None,
+        branch_name: str = None,
+        equipment_type: str = None,
+        inv_no: str = None,
+        description: str = None,
+        ip_address: str = None,
+        status: str = "В эксплуатации",
+        status_no: int = None,
+        type_no: int = None,
+        model_no: int = None
+    ) -> Dict[str, Any]:
+        """
+        Добавляет новое оборудование в таблицу ITEMS
+
+        Параметры:
+            serial_number: Серийный номер (обязательный)
+            model_name: Модель оборудования
+            employee_name: ФИО сотрудника
+            location_descr: Местоположение
+            branch_name: Филиал
+            equipment_type: Тип оборудования
+            inv_no: Инвентарный номер
+            description: Описание
+            ip_address: IP-адрес
+            status: Статус (по умолчанию "В эксплуатации")
+            type_no: TYPE_NO напрямую (если выбран из подсказок)
+            model_no: MODEL_NO напрямую (если выбран из подсказок)
+
+        Возвращает:
+            Словарь с результатом операции:
+            - success: bool - успешно ли выполнено
+            - item_id: int - ID созданной записи
+            - message: str - сообщение о результате
+        """
+        result = {
+            'success': False,
+            'item_id': None,
+            'message': ''
+        }
+
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                now = datetime.now()
+
+                # Проверяем, не существует ли уже оборудование с таким серийным номером
+                cursor.execute("""
+                    SELECT ID, EMPL_NO FROM ITEMS WHERE SERIAL_NO = ?
+                """, (serial_number,))
+                existing = cursor.fetchone()
+
+                if existing:
+                    result['message'] = f"Оборудование с серийным номером {serial_number} уже существует (ID={existing[0]})"
+                    result['item_id'] = existing[0]
+                    return result
+
+                # Получаем значения внешних ключей
+                # Если type_no передан напрямую - используем его, иначе ищем по названию
+                if type_no is None and equipment_type:
+                    # Сначала строгий поиск
+                    type_no = self.get_type_no_by_name(equipment_type, strict=True)
+                    if type_no is None:
+                        # Затем нестрогий поиск
+                        type_no = self.get_type_no_by_name(equipment_type, strict=False)
+                    if type_no is None:
+                        logger.warning(f"Тип оборудования '{equipment_type}' не найден, используем дефолтный")
+
+                # Если model_no передан напрямую - используем его, иначе ищем по названию
+                if model_no is None and model_name:
+                    # Сначала строгий поиск
+                    model_no = self.get_model_no_by_name(model_name, strict=True)
+                    if model_no is None:
+                        # Затем нестрогий поиск
+                        model_no = self.get_model_no_by_name(model_name, strict=False)
+                    if model_no is None:
+                        # Если не найдено, создаём новую модель
+                        logger.info(f"Модель '{model_name}' не найдена, создаём новую запись")
+                        # Используем type_no если уже определён
+                        if type_no is not None:
+                            model_no = self.create_model(model_name, type_no, ci_type=1)
+                        else:
+                            # Если type_no не определён, получаем дефолтный
+                            default_type_no = self.get_default_type_no(ci_type=1)
+                            if default_type_no:
+                                model_no = self.create_model(model_name, default_type_no, ci_type=1)
+                            else:
+                                logger.error("Не удалось получить дефолтный TYPE_NO для создания модели")
+                        if model_no:
+                            result['message'] += f" Создана новую модель: {model_name} (MODEL_NO={model_no})."
+                        else:
+                            logger.warning(f"Не удалось создать модель '{model_name}', будет использован дефолт")
+
+                # Обработка статуса
+                if status_no is None:
+                    # Если status_no не передан напрямую, ищем по названию
+                    if status:
+                        # Сначала строгий поиск
+                        status_no = self.get_status_no_by_name(status, strict=True)
+                        if status_no is None:
+                            # Затем нестрогий поиск
+                            status_no = self.get_status_no_by_name(status, strict=False)
+                        if status_no is None:
+                            # Если не найдено, создаём новый статус
+                            logger.info(f"Статус '{status}' не найден, создаём новую запись")
+                            status_no = self.create_status(status)
+                            if status_no:
+                                result['message'] += f" Создан новый статус: {status} (STATUS_NO={status_no})."
+                            else:
+                                logger.warning(f"Не удалось создать статус '{status}', будет использован дефолт")
+
+                empl_no = None
+                if employee_name:
+                    empl_no = self.get_owner_no_by_name(employee_name, strict=False)
+                    if empl_no is None:
+                        logger.warning(f"Сотрудник '{employee_name}' не найден, создаём новую запись")
+                        empl_no = self.create_owner(employee_name)
+                        if empl_no:
+                            result['message'] += f" Создан новый сотрудник: {employee_name} (OWNER_NO={empl_no})."
+
+                branch_no = None
+                if branch_name:
+                    branch_no = self.get_branch_no_by_name(branch_name)
+
+                loc_no = None
+                if location_descr:
+                    loc_no = self.get_loc_no_by_descr(location_descr)
+
+                # Используем дефолтные значения для обязательных полей
+                if type_no is None:
+                    type_no = self.get_default_type_no()
+                    logger.info(f"Используем дефолтный TYPE_NO: {type_no}")
+
+                if model_no is None:
+                    model_no = self.get_default_model_no()
+                    logger.info(f"Используем дефолтный MODEL_NO: {model_no}")
+
+                if branch_no is None:
+                    branch_no = self.get_default_branch_no()
+                    logger.info(f"Используем дефолтный BRANCH_NO: {branch_no}")
+
+                if loc_no is None:
+                    loc_no = self.get_default_loc_no()
+                    logger.info(f"Используем дефолтный LOC_NO: {loc_no}")
+
+                if status_no is None:
+                    status_no = self.get_default_status_no()
+                    logger.info(f"Используем дефолтный STATUS_NO: {status_no}")
+
+                # Получаем следующий ID для ITEMS
+                cursor.execute("SELECT ISNULL(MAX(ID), 0) + 1 FROM ITEMS")
+                next_id = cursor.fetchone()[0]
+
+                # Генерируем инвентарный номер если не указан
+                if not inv_no:
+                    cursor.execute("SELECT ISNULL(MAX(CAST(INV_NO AS INT)), 0) + 1 FROM ITEMS WHERE INV_NO IS NOT NULL AND ISNUMERIC(INV_NO) = 1")
+                    next_inv_no = cursor.fetchone()[0]
+                    inv_no = str(next_inv_no)
+                    logger.info(f"Сгенерирован инвентарный номер: {inv_no}")
+
+                # Вставляем запись в ITEMS
+                insert_query = """
+                    INSERT INTO ITEMS (
+                        ID, SERIAL_NO, INV_NO, TYPE_NO, MODEL_NO,
+                        BRANCH_NO, LOC_NO, STATUS_NO, EMPL_NO, QTY,
+                        CI_TYPE, COMP_NO, DESCR, CREATE_DATE, CH_DATE, CH_USER
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+
+                cursor.execute(insert_query, (
+                    next_id,
+                    serial_number,
+                    inv_no,
+                    type_no,
+                    model_no,
+                    branch_no,
+                    loc_no,
+                    status_no,
+                    empl_no,
+                    1,  # QTY
+                    1,  # CI_TYPE (1 для IT-оборудования)
+                    0,  # COMP_NO (0 = ООО "Запсибгазпром-Газификация")
+                    description,
+                    now,
+                    now,
+                    "IT-BOT"
+                ))
+
+                conn.commit()
+
+                result['success'] = True
+                result['item_id'] = next_id
+                result['message'] = f"Оборудование успешно добавлено (ID={next_id})" + result['message']
+                logger.info(f"Добавлено оборудование: SERIAL_NO={serial_number}, ID={next_id}")
+
+                # Сохраняем IP-адрес если указан
+                if ip_address:
+                    self.save_item_ip_address(next_id, ip_address)
+
+                return result
+
+        except Exception as e:
+            logger.error(f"Ошибка при добавлении оборудования в ITEMS: {e}")
+            result['message'] = f"Ошибка при добавлении: {e}"
+            return result
+
+    def save_item_ip_address(self, item_no: int, ip_address: str) -> bool:
+        """
+        Сохраняет IP-адрес оборудования в таблицу ITEMS
+
+        Параметры:
+            item_no: ID оборудования
+            ip_address: IP-адрес
+
+        Возвращает:
+            True если успешно, False иначе
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Обновляем IP-адрес в записи (колонка IP_ADDRESS уже есть в ITEMS)
+                cursor.execute("""
+                    UPDATE ITEMS
+                    SET IP_ADDRESS = ?, CH_DATE = GETDATE(), CH_USER = 'IT-BOT'
+                    WHERE ID = ?
+                """, (ip_address, item_no))
+
+                conn.commit()
+                logger.info(f"Сохранён IP-адрес: ID={item_no}, IP={ip_address}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Ошибка при сохранении IP-адреса для ID={item_no}: {e}")
+            return False
+
     def test_database_connection(self) -> Dict[str, Any]:
         """
         Тестирование подключения и основных запросов
@@ -1107,103 +1978,6 @@ class UniversalInventoryDB:
         
         return tests
 
-    def search_equipment_by_employee(self, employee_name: str, limit: int = 50) -> List[Dict[str, Any]]:
-        """
-        Поиск оборудования по имени сотрудника.
-        
-        Args:
-            employee_name: Имя сотрудника для поиска
-            limit: Максимальное количество результатов
-            
-        Returns:
-            Список словарей с информацией об оборудовании
-        """
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                
-                query_with_location = f"""
-                SELECT TOP {limit}
-                    i.ID,
-                    i.SERIAL_NO,
-                    i.HW_SERIAL_NO,
-                    i.INV_NO,
-                    i.PART_NO,
-                    i.CI_TYPE,
-                    t.TYPE_NAME,
-                    i.MODEL_NO,
-                    m.MODEL_NAME,
-                    v.VENDOR_NAME as MANUFACTURER,
-                    l.DESCR as LOCATION,
-                    i.EMPL_NO,
-                    o.OWNER_DISPLAY_NAME as EMPLOYEE_NAME,
-                    s.DESCR as STATUS,
-                    i.DESCR as DESCRIPTION
-                FROM ITEMS i
-                LEFT JOIN CI_TYPES t ON i.CI_TYPE = t.CI_TYPE AND i.TYPE_NO = t.TYPE_NO
-                LEFT JOIN CI_MODELS m ON i.MODEL_NO = m.MODEL_NO AND i.CI_TYPE = m.CI_TYPE
-                LEFT JOIN VENDORS v ON m.VENDOR_NO = v.VENDOR_NO
-                LEFT JOIN LOCATIONS l ON i.LOC_NO = l.LOC_NO
-                LEFT JOIN OWNERS o ON i.EMPL_NO = o.OWNER_NO
-                LEFT JOIN STATUS s ON i.STATUS_NO = s.STATUS_NO
-                WHERE o.OWNER_DISPLAY_NAME LIKE ?
-                ORDER BY i.ID
-                """
-                
-                query_without_location = f"""
-                SELECT TOP {limit}
-                    i.ID,
-                    i.SERIAL_NO,
-                    i.HW_SERIAL_NO,
-                    i.INV_NO,
-                    i.PART_NO,
-                    i.CI_TYPE,
-                    t.TYPE_NAME,
-                    i.MODEL_NO,
-                    m.MODEL_NAME,
-                    v.VENDOR_NAME as MANUFACTURER,
-                    'Не указана' as LOCATION,
-                    i.EMPL_NO,
-                    o.OWNER_DISPLAY_NAME as EMPLOYEE_NAME,
-                    s.DESCR as STATUS,
-                    i.DESCR as DESCRIPTION
-                FROM ITEMS i
-                LEFT JOIN CI_TYPES t ON i.CI_TYPE = t.CI_TYPE AND i.TYPE_NO = t.TYPE_NO
-                LEFT JOIN CI_MODELS m ON i.MODEL_NO = m.MODEL_NO AND i.CI_TYPE = m.CI_TYPE
-                LEFT JOIN VENDORS v ON m.VENDOR_NO = v.VENDOR_NO
-                LEFT JOIN OWNERS o ON i.EMPL_NO = o.OWNER_NO
-                LEFT JOIN STATUS s ON i.STATUS_NO = s.STATUS_NO
-                WHERE o.OWNER_DISPLAY_NAME LIKE ?
-                ORDER BY i.ID
-                """
-                
-                search_pattern = f"%{employee_name}%"
-                params = (search_pattern,)
-                
-                try:
-                    cursor.execute(query_with_location, params)
-                    rows = cursor.fetchall()
-                except Exception as e:
-                    error_msg = str(e).lower()
-                    if 'permission' in error_msg or 'запрещено' in error_msg or 'locations' in error_msg:
-                        logger.warning(f"Нет доступа к таблице LOCATIONS, выполняем поиск без неё: {e}")
-                        cursor.execute(query_without_location, params)
-                        rows = cursor.fetchall()
-                    else:
-                        raise e
-                
-                results = []
-                for row in rows:
-                    columns = [column[0] for column in cursor.description]
-                    result = dict(zip(columns, row))
-                    results.append(result)
-                    
-                return results
-                
-        except Exception as e:
-            logger.error(f"Ошибка при поиске оборудования сотрудника '{employee_name}': {e}")
-            return []
-
     def get_status_list(self) -> List[str]:
         """
         Возвращает список доступных статусов из таблицы STATUS.
@@ -1223,6 +1997,187 @@ class UniversalInventoryDB:
         except Exception as e:
             logger.error(f"Ошибка при получении списка статусов: {e}")
             return []
+
+    def get_status_list_with_ids(self) -> List[tuple]:
+        """
+        Возвращает список статусов с ID из таблицы STATUS.
+
+        Возвращает:
+            Список кортежей (STATUS_NO, DESCR)
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT STATUS_NO, DESCR
+                    FROM STATUS
+                    WHERE DESCR IS NOT NULL AND DESCR <> ''
+                    ORDER BY DESCR
+                """)
+                rows = cursor.fetchall()
+                statuses = []
+                for row in rows:
+                    status_no = int(row[0]) if row and row[0] is not None else None
+                    descr = str(row[1]).strip() if row and row[1] is not None else ''
+                    if status_no is not None and descr:
+                        statuses.append((status_no, descr))
+                return statuses
+        except Exception as e:
+            logger.error(f"Ошибка при получении списка статусов с ID: {e}")
+            return []
+
+    def transfer_equipment_with_history(
+        self,
+        serial_number: str,
+        new_employee_id: int,
+        new_employee_name: str,
+        new_branch_no: int = None,
+        new_loc_no: int = None,
+        comment: str = None
+    ) -> Dict[str, Any]:
+        """
+        Перемещает оборудование с записью в историю CI_HISTORY
+
+        Параметры:
+            serial_number: Серийный номер оборудования
+            new_employee_id: Новый табельный номер (EMPL_NO)
+            new_employee_name: ФИО нового сотрудника (для логирования)
+            new_branch_no: Новый номер филиала (BRANCH_NO) - опционально
+            new_loc_no: Новый номер локации (LOC_NO) - опционально
+            comment: Комментарий к изменению
+
+        Возвращает:
+            Dict[str, Any]: Результат операции с ключами:
+                - success: bool - успешно ли выполнено
+                - message: str - сообщение о результате
+                - old_employee_id: int - старый EMPL_NO
+                - hist_id: int - ID записи в истории (если успешно)
+        """
+        from datetime import datetime
+
+        result = {
+            'success': False,
+            'message': '',
+            'old_employee_id': None,
+            'hist_id': None
+        }
+
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # Текущая дата и время
+            now = datetime.now()
+
+            # 1. Читаем текущие данные оборудования
+            cursor.execute("""
+                SELECT ID, EMPL_NO, BRANCH_NO, LOC_NO, STATUS_NO,
+                       SERIAL_NO, INV_NO, TYPE_NO, MODEL_NO, CI_TYPE, QTY
+                FROM ITEMS
+                WHERE SERIAL_NO = ?
+            """, serial_number)
+
+            current = cursor.fetchone()
+            if not current:
+                result['message'] = f"Оборудование с серийным номером {serial_number} не найдено"
+                logger.warning(result['message'])
+                return result
+
+            item_id = current[0]
+            old_empl_no = current[1]
+            old_branch_no = current[2]
+            old_loc_no = current[3]
+            old_status_no = current[4]
+            old_serial_no = current[5]
+            old_inv_no = current[6]
+            old_type_no = current[7]
+            old_model_no = current[8]
+            old_ci_type = current[9]
+            old_qty = current[10] if current[10] is not None else 1
+
+            result['old_employee_id'] = old_empl_no
+
+            # Используем переданные значения или сохраняем старые
+            final_branch_no = new_branch_no if new_branch_no is not None else old_branch_no
+            final_loc_no = new_loc_no if new_loc_no is not None else old_loc_no
+            # Количество всегда 1 для единицы оборудования
+            new_qty = 1
+
+            logger.info(f"Перемещение {serial_number}: EMPL_NO {old_empl_no} -> {new_employee_id}, BRANCH_NO {old_branch_no} -> {final_branch_no}, LOC_NO {old_loc_no} -> {final_loc_no}, QTY {old_qty} -> {new_qty}")
+
+            # 2. Получаем следующий HIST_ID
+            cursor.execute("SELECT ISNULL(MAX(HIST_ID), 0) + 1 FROM CI_HISTORY")
+            next_hist_id = cursor.fetchone()[0]
+
+            # 3. Добавляем запись в историю CI_HISTORY
+            cursor.execute("""
+                INSERT INTO CI_HISTORY (
+                    HIST_ID,
+                    ITEM_ID,
+                    EMPL_NO_OLD, EMPL_NO_NEW,
+                    BRANCH_NO_OLD, BRANCH_NO_NEW,
+                    LOC_NO_OLD, LOC_NO_NEW,
+                    STATUS_NO_OLD, STATUS_NO_NEW,
+                    SERIAL_NO_OLD, SERIAL_NO_NEW,
+                    INV_NO_OLD, INV_NO_NEW,
+                    TYPE_NO_OLD, TYPE_NO_NEW,
+                    MODEL_NO_OLD, MODEL_NO_NEW,
+                    CI_TYPE_OLD, CI_TYPE_NEW,
+                    COMP_NO_OLD, COMP_NO_NEW,
+                    QTY_OLD, QTY_NEW,
+                    CH_DATE, CH_USER, CH_COMMENT
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                next_hist_id,
+                item_id,
+                old_empl_no, new_employee_id,
+                old_branch_no, final_branch_no,
+                old_loc_no, final_loc_no,
+                old_status_no, old_status_no,
+                old_serial_no, old_serial_no,
+                old_inv_no, old_inv_no,
+                old_type_no, old_type_no,
+                old_model_no, old_model_no,
+                old_ci_type, old_ci_type,
+                0, 0,
+                old_qty, new_qty,
+                now, "IT-BOT", comment
+            ))
+
+            # 4. Обновляем запись в ITEMS
+            cursor.execute("""
+                UPDATE ITEMS
+                SET EMPL_NO = ?,
+                    BRANCH_NO = ?,
+                    LOC_NO = ?,
+                    QTY = ?,
+                    CH_DATE = ?,
+                    CH_USER = ?
+                WHERE SERIAL_NO = ?
+            """, new_employee_id, final_branch_no, final_loc_no, new_qty, now, "IT-BOT", serial_number)
+
+            conn.commit()
+
+            result['success'] = True
+            result['hist_id'] = next_hist_id
+            result['message'] = (
+                f"Оборудование {serial_number} перемещено: "
+                f"EMPL_NO {old_empl_no} -> {new_employee_id} ({new_employee_name})"
+            )
+            if new_branch_no is not None and new_branch_no != old_branch_no:
+                result['message'] += f", BRANCH_NO {old_branch_no} -> {new_branch_no}"
+            if new_loc_no is not None and new_loc_no != old_loc_no:
+                result['message'] += f", LOC_NO {old_loc_no} -> {new_loc_no}"
+            logger.info(result['message'])
+
+            cursor.close()
+
+        except Exception as e:
+            logger.error(f"Ошибка при перемещении оборудования {serial_number}: {e}", exc_info=True)
+            result['message'] = f"Ошибка: {str(e)}"
+            result['success'] = False
+
+        return result
 
 # Пример использования
 if __name__ == "__main__":
