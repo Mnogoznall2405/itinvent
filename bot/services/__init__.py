@@ -18,6 +18,10 @@ from .ocr_service import (
     extract_model,
     clean_serial_number
 )
+from .qr_service import (
+    extract_qr_payload_from_image,
+    parse_qr_equipment_payload
+)
 from .excel_service import (
     BaseExcelExporter,
     GroupedExcelExporter,
@@ -42,6 +46,9 @@ __all__ = [
     'extract_serial_from_image',
     'extract_model',
     'clean_serial_number',
+    # QR
+    'extract_qr_payload_from_image',
+    'parse_qr_equipment_payload',
     # Excel Export
     'BaseExcelExporter',
     'GroupedExcelExporter',

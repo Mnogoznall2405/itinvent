@@ -13,6 +13,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from bot.config import Messages
 from bot.utils.decorators import require_user_access
 from bot.utils.keyboards import create_main_menu_keyboard
+from bot.local_json_store import load_json_data, save_json_data
 
 logger = logging.getLogger(__name__)
 
@@ -131,8 +132,6 @@ async def handle_database_selection(update: Update, context: ContextTypes.DEFAUL
         context: Контекст выполнения команды
     """
     from bot.database_manager import database_manager
-    import json
-
     query = update.callback_query
     await query.answer()
 
@@ -143,16 +142,11 @@ async def handle_database_selection(update: Update, context: ContextTypes.DEFAUL
         db_name = data.split(':', 1)[1]
 
         # Сохраняем выбор в user_db_selection.json
-        try:
-            with open(database_manager.user_selection_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        except FileNotFoundError:
+        data = load_json_data(database_manager.user_selection_name, default_content={})
+        if not isinstance(data, dict):
             data = {}
-
         data[str(user_id)] = db_name
-
-        with open(database_manager.user_selection_file, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        save_json_data(database_manager.user_selection_name, data)
 
         # Обновляем в памяти
         database_manager.user_assigned_db[user_id] = db_name

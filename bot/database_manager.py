@@ -18,9 +18,11 @@
 
 import os
 import logging
+from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from bot.universal_database import UniversalInventoryDB, DatabaseConfig
+from bot.local_json_store import load_json_data, save_json_data
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +59,10 @@ class DatabaseManager:
         self.databases: Dict[str, DatabaseInfo] = {}
         self.user_selected_db: Dict[int, str] = {}  # user_id -> database_name
         self.user_assigned_db: Dict[int, str] = {}  # user_id -> назначенная база (только чтение)
-        # Файл для хранения выборов пользователей
-        self.user_selection_file = "data/user_db_selection.json"
+        # Файл для хранения выборов пользователей - используем абсолютный путь
+        base_dir = Path(__file__).parent.parent
+        self.user_selection_file = str(base_dir / "data" / "user_db_selection.json")
+        self.user_selection_name = Path(self.user_selection_file).name
         # Загружаем администраторов с доступом ко всем базам
         self.admin_user_ids = self._load_admin_users()
         self._load_database_configs()
@@ -365,9 +369,7 @@ class DatabaseManager:
     def _load_user_assignations(self):
         """Загружает назначенные базы пользователей из файла user_db_selection.json."""
         try:
-            import json
-            with open(self.user_selection_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+            data = load_json_data(self.user_selection_name, default_content={})
             if isinstance(data, dict):
                 for k, v in data.items():
                     try:
@@ -388,9 +390,7 @@ class DatabaseManager:
     def _load_user_selections(self):
         """Загружает сохранённые выборы БД пользователей из файла."""
         try:
-            import json
-            with open(self.user_selection_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+            data = load_json_data(self.user_selection_name, default_content={})
             if isinstance(data, dict):
                 for k, v in data.items():
                     try:
@@ -408,10 +408,8 @@ class DatabaseManager:
     def _save_user_selections(self):
         """Сохраняет текущие выборы БД пользователей в файл."""
         try:
-            import json
             to_save = {str(k): v for k, v in self.user_selected_db.items()}
-            with open(self.user_selection_file, 'w', encoding='utf-8') as f:
-                json.dump(to_save, f, ensure_ascii=False, indent=2)
+            save_json_data(self.user_selection_name, to_save)
         except Exception as e:
             logger.warning(f"Не удалось сохранить выбор баз пользователей: {e}")
 

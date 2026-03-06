@@ -28,13 +28,15 @@ from bot.handlers.location import (
 )
 from bot.services.cartridge_database import cartridge_database
 from bot.services.enhanced_printer_detector import enhanced_detector
-from bot.services.ocr_service import (
-    extract_serial_from_image,
-    validate_serial_format
+from bot.services.input_identifier_service import (
+    detect_identifiers_from_image,
+    detect_identifiers_from_text,
 )
+from bot.services.validation import validate_serial_number
 from bot.services.printer_component_detector import component_detector
 from bot.database_manager import database_manager
 from bot.universal_database import UniversalInventoryDB
+from bot.local_json_store import append_json_data, load_json_data
 
 logger = logging.getLogger(__name__)
 
@@ -65,71 +67,148 @@ async def handle_serial_input_with_ocr(
     Возвращает:
         int: Следующее состояние
     """
-    serial_number = None
+    user_id = update.effective_user.id
+    search_inv_no = None
+    search_serial_no = None
+    source_label = "manual"
 
-    # Обработка фотографии
-    if update.message.photo:
+    is_photo_message = bool(update.message and update.message.photo)
+    is_document_image_message = bool(
+        update.message
+        and update.message.document
+        and str(update.message.document.mime_type or "").startswith("image/")
+    )
+    is_text_message = bool(update.message and update.message.text)
+
+    if is_photo_message or is_document_image_message:
         status_msg = await update.message.reply_text("🔍 Анализирую изображение...")
-
+        file_path = None
+        source_kind = "photo" if is_photo_message else "document"
         try:
-            photo = update.message.photo[-1]
-            file = await context.bot.get_file(photo.file_id)
-            file_path = f"{temp_file_prefix}{update.effective_user.id}.jpg"
-            await file.download_to_drive(file_path)
+            if is_photo_message:
+                photo = update.message.photo[-1]
+                incoming_file = await context.bot.get_file(photo.file_id)
+                file_id = photo.file_id
+                file_ext = ".jpg"
+            else:
+                document = update.message.document
+                incoming_file = await context.bot.get_file(document.file_id)
+                file_id = document.file_id
+                original_name = str(document.file_name or "work_qr_image").strip()
+                file_ext = os.path.splitext(original_name)[1] or ".jpg"
+                logger.info(
+                    "[WORK] received_document_image user_id=%s name=%s mime=%s size=%s",
+                    user_id,
+                    original_name,
+                    document.mime_type,
+                    document.file_size,
+                )
 
-            # Распознаем серийный номер
-            serial_number = await extract_serial_from_image(file_path)
+            file_path = f"{temp_file_prefix}{file_id}{file_ext}"
+            await incoming_file.download_to_drive(file_path)
 
-            # Удаляем временный файл
-            if os.path.exists(file_path):
-                os.remove(file_path)
+            detection = await detect_identifiers_from_image(file_path)
+            search_inv_no = detection.get("inv_no")
+            search_serial_no = detection.get("serial_no")
 
-            try:
-                await status_msg.delete()
-            except:
-                pass
+            if detection.get("detector") == "qr":
+                source_label = f"qr_{source_kind}"
+                logger.info(
+                    "[WORK][QR] detected_from_%s user_id=%s inv_no=%s serial_no=%s",
+                    source_kind,
+                    user_id,
+                    search_inv_no or "-",
+                    search_serial_no or "-",
+                )
+            elif detection.get("detector") == "ocr":
+                source_label = f"ocr_{source_kind}"
+                logger.info(
+                    "[WORK][OCR] fallback_from_%s user_id=%s serial=%s",
+                    source_kind,
+                    user_id,
+                    search_serial_no or "-",
+                )
+            else:
+                logger.info("[WORK][QR] not_detected_from_%s user_id=%s", source_kind, user_id)
 
         except Exception as e:
-            logger.error(f"Error processing photo: {e}")
+            logger.error(f"Error processing image in work flow: {e}")
             await update.message.reply_text(
-                "❌ Не удалось распознать серийный номер.\n"
-                "Пожалуйста, введите его вручную:"
+                "❌ Не удалось распознать QR/серийный номер.\n"
+                "Пожалуйста, попробуйте другое изображение или введите номер вручную."
             )
             return error_state
+        finally:
+            try:
+                if file_path and os.path.exists(file_path):
+                    os.remove(file_path)
+            except Exception:
+                pass
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
 
-    # Обработка текстового ввода
-    elif update.message.text:
-        serial_number = update.message.text.strip()
+    elif is_text_message:
+        text_input = update.message.text.strip()
+        detection = detect_identifiers_from_text(text_input)
+        if detection.get("detector") == "qr":
+            search_inv_no = detection.get("inv_no")
+            search_serial_no = detection.get("serial_no")
+            source_label = "qr_text"
+            logger.info(
+                "[WORK][QR] detected_from_text user_id=%s inv_no=%s serial_no=%s text_len=%s",
+                user_id,
+                search_inv_no or "-",
+                search_serial_no or "-",
+                len(text_input),
+            )
+        elif detection.get("detector") == "manual":
+            search_serial_no = detection.get("serial_no")
+            source_label = "manual_text"
+            logger.info(
+                "[WORK][QR] not_detected_from_text user_id=%s fallback_manual_serial=%s",
+                user_id,
+                search_serial_no or "-",
+            )
 
-    if not serial_number:
+    if not search_inv_no and not search_serial_no:
         await update.message.reply_text(
-            "❌ Серийный номер не указан.\n"
-            "Отправьте фото или введите серийный номер:"
+            "❌ Не удалось определить номер.\n"
+            "Отправьте QR-code (фото/документ/текст) или серийный номер:"
         )
         return error_state
 
-    # Валидация формата
-    if not validate_serial_format(serial_number):
+    if (
+        not search_inv_no
+        and search_serial_no
+        and source_label in {"manual_text", "ocr_photo", "ocr_document"}
+        and not validate_serial_number(search_serial_no)
+    ):
         await update.message.reply_text(
-            f"⚠️ Неверный формат серийного номера: {serial_number}\n\n"
-            "Серийный номер должен содержать буквы и цифры.\n"
+            f"⚠️ Неверный формат серийного номера: {search_serial_no}\n\n"
+            "Серийный номер должен содержать только буквы, цифры и символы: - _ . :\n"
             "Попробуйте еще раз:"
         )
         return error_state
 
-    # Сохраняем серийный номер
-    context.user_data[user_data_serial_key] = serial_number
-
     # Поиск оборудования в базе данных
-    user_id = update.effective_user.id
     db_name = database_manager.get_user_database(user_id)
     config = database_manager.get_database_config(db_name)
 
     if config:
         db = UniversalInventoryDB(config)
 
-        # Поиск по серийному номеру (автоматически пробует варианты O↔0)
-        result = db.find_by_serial_number(serial_number)
+        result = None
+        if search_inv_no:
+            logger.info("[WORK] try_inv_lookup user_id=%s inv_no=%s", user_id, search_inv_no)
+            result = db.find_by_inventory_number(search_inv_no)
+            logger.info("[WORK] inv_lookup_result user_id=%s found=%s", user_id, bool(result))
+
+        if not result and search_serial_no:
+            logger.info("[WORK] try_serial_lookup user_id=%s serial=%s", user_id, search_serial_no)
+            result = db.find_by_serial_number(search_serial_no)
+            logger.info("[WORK] serial_lookup_result user_id=%s found=%s", user_id, bool(result))
 
         # Проверяем тип результата - может быть список или одиночная запись
         equipment = None
@@ -141,16 +220,25 @@ async def handle_serial_input_with_ocr(
 
         if equipment:
             # Найдено оборудование - сохраняем данные
+            serial_to_save = (
+                equipment.get('SERIAL_NO')
+                or equipment.get('HW_SERIAL_NO')
+                or search_serial_no
+                or search_inv_no
+                or ''
+            )
+            context.user_data[user_data_serial_key] = serial_to_save
             context.user_data[user_data_equipment_key] = equipment
 
             # Показываем информацию для подтверждения
             return await confirmation_handler(update, context, equipment)
         else:
             # Оборудование не найдено
+            target = search_inv_no or search_serial_no or "-"
             await update.message.reply_text(
-                f"⚠️ {equipment_type_name} с серийным номером <b>{serial_number}</b> не найден в базе данных.\n\n"
+                f"⚠️ {equipment_type_name} с номером <b>{target}</b> не найден в базе данных.\n\n"
                 f"📊 База: {db_name}\n\n"
-                "Проверьте серийный номер и попробуйте снова:",
+                "Проверьте номер и попробуйте снова:",
                 parse_mode='HTML'
             )
             return error_state
@@ -246,8 +334,8 @@ async def handle_work_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         context.user_data['work_type'] = 'battery_replacement'
         message_text = (
             "🔋 <b>Замена батареи ИБП</b>\n\n"
-            "📷 Отправьте фото серийного номера\n"
-            "Или введите серийный номер ИБП:"
+            "📷 Отправьте фото/документ с QR или серийным номером\n"
+            "Или отправьте QR payload/серийный номер текстом:"
         )
         await query.edit_message_text(message_text, parse_mode='HTML')
         return States.WORK_BATTERY_SERIAL_INPUT
@@ -256,8 +344,8 @@ async def handle_work_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         context.user_data['work_type'] = 'component_replacement'
         message_text = (
             "🖥️ <b>Замена компонентов ПК</b>\n\n"
-            "📷 Отправьте фото серийного номера\n"
-            "Или введите серийный номер ПК:"
+            "📷 Отправьте фото/документ с QR или серийным номером\n"
+            "Или отправьте QR payload/серийный номер текстом:"
         )
         await query.edit_message_text(message_text, parse_mode='HTML')
         return States.WORK_COMPONENT_SERIAL_INPUT
@@ -266,8 +354,8 @@ async def handle_work_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         context.user_data['work_type'] = 'pc_cleaning'
         message_text = (
             "🖥️ <b>Чистка ПК</b>\n\n"
-            "📷 Отправьте фото серийного номера\n"
-            "Или введите серийный номер ПК:"
+            "📷 Отправьте фото/документ с QR или серийным номером\n"
+            "Или отправьте QR payload/серийный номер текстом:"
         )
         await query.edit_message_text(message_text, parse_mode='HTML')
         return States.WORK_PC_CLEANING_SERIAL_INPUT
@@ -318,19 +406,19 @@ async def handle_restart_work(update: Update, context: ContextTypes.DEFAULT_TYPE
     if work_type == 'pc_cleaning':
         await context.bot.send_message(
             chat_id=query.message.chat_id,
-            text="🖥️ <b>Чистка ПК</b>\n\n📷 Отправьте фото серийного номера\nИли введите серийный номер ПК:",
+            text="🖥️ <b>Чистка ПК</b>\n\n📷 Отправьте фото/документ с QR или серийным номером\nИли отправьте QR payload/серийный номер текстом:",
             parse_mode='HTML'
         )
     elif work_type == 'battery_replacement':
         await context.bot.send_message(
             chat_id=query.message.chat_id,
-            text="🔋 <b>Замена батареи ИБП</b>\n\n📷 Отправьте фото серийного номера\nИли введите серийный номер ИБП:",
+            text="🔋 <b>Замена батареи ИБП</b>\n\n📷 Отправьте фото/документ с QR или серийным номером\nИли отправьте QR payload/серийный номер текстом:",
             parse_mode='HTML'
         )
     elif work_type == 'component_replacement':
         await context.bot.send_message(
             chat_id=query.message.chat_id,
-            text="🖥️ <b>Замена компонентов ПК</b>\n\n📷 Отправьте фото серийного номера\nИли введите серийный номер ПК:",
+            text="🖥️ <b>Замена компонентов ПК</b>\n\n📷 Отправьте фото/документ с QR или серийным номером\nИли отправьте QR payload/серийный номер текстом:",
             parse_mode='HTML'
         )
     elif work_type == 'cartridge':
@@ -844,58 +932,47 @@ async def show_pc_cleaning_confirmation(update: Update, context: ContextTypes.DE
     last_cleaning_section = ""
     file_path = Path("data/pc_cleanings.json")
 
-    if file_path.exists():
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                cleanings = json.load(f)
+    try:
+        cleanings = load_json_data(str(file_path), default_content=[])
+        if not isinstance(cleanings, list):
+            cleanings = []
 
-            # Ищем чистки для этого серийного номера
-            pc_cleanings = [
-                c for c in cleanings
-                if c.get('serial_no') == serial_no or c.get('serial_no') == hw_serial_no
-            ]
+        # Ищем чистки для этого серийного номера
+        pc_cleanings = [
+            c for c in cleanings
+            if c.get('serial_no') == serial_no or c.get('serial_no') == hw_serial_no
+        ]
 
-            if pc_cleanings:
-                # Сортируем по дате (убывание)
-                pc_cleanings.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-                last_cleaning = pc_cleanings[0]
-                last_date = datetime.fromisoformat(last_cleaning['timestamp'])
+        if pc_cleanings:
+            pc_cleanings.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+            last_cleaning = pc_cleanings[0]
+            last_date = datetime.fromisoformat(last_cleaning['timestamp'])
 
-                # Вычисляем сколько времени прошло
-                now = datetime.now()
-                delta = now - last_date
-                days_ago = delta.days
+            now = datetime.now()
+            days_ago = (now - last_date).days
+            if days_ago == 0:
+                time_ago = "сегодня"
+            elif days_ago == 1:
+                time_ago = "вчера"
+            elif days_ago < 7:
+                time_ago = f"{days_ago} дн. назад"
+            elif days_ago < 30:
+                time_ago = f"{days_ago // 7} нед. назад"
+            elif days_ago < 365:
+                time_ago = f"{days_ago // 30} мес. назад"
+            else:
+                time_ago = f"{days_ago // 365} г. назад"
 
-                if days_ago == 0:
-                    time_ago = "сегодня"
-                elif days_ago == 1:
-                    time_ago = "вчера"
-                elif days_ago < 7:
-                    time_ago = f"{days_ago} дн. назад"
-                elif days_ago < 30:
-                    weeks = days_ago // 7
-                    time_ago = f"{weeks} нед. {'назад' if weeks == 1 else 'назад'}"
-                elif days_ago < 365:
-                    months = days_ago // 30
-                    time_ago = f"{months} мес. {'назад' if months == 1 else 'назад'}"
-                else:
-                    years = days_ago // 365
-                    time_ago = f"{years} г. {'назад' if years == 1 else 'назад'}"
+            last_cleaning_section = (
+                "\n"
+                f"🧹 <b>История чисток</b>\n"
+                f"📅 <b>Последняя:</b> {last_date.strftime('%d.%m.%Y')} в {last_date.strftime('%H:%M')}\n"
+                f"🕒 <b>Давность:</b> {time_ago}\n"
+                f"🔁 <b>Всего чисток:</b> {len(pc_cleanings)}\n"
+            )
+    except Exception as e:
+        logger.error(f"Error reading pc_cleanings data: {e}")
 
-                # Формируем красивый блок с информацией о последней чистке
-                last_cleaning_section = (
-                    "\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🕒 <b>ИСТОРИЯ ЧИСТОК</b>\n"
-                    f"📅 <b>Последняя:</b> {last_date.strftime('%d.%m.%Y')} в {last_date.strftime('%H:%M')}\n"
-                    f"⏳ <b>Прошло:</b> {time_ago}\n"
-                    f"🔢 <b>Всего чисток:</b> {len(pc_cleanings)}\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
-                )
-        except Exception as e:
-            logger.error(f"Error reading pc_cleanings.json: {e}")
-
-    # Формируем текст подтверждения
     serial_display = f"{serial_no} / {hw_serial_no}" if hw_serial_no else serial_no
 
     confirmation_text = (
@@ -1497,24 +1574,24 @@ async def handle_work_success_action(update: Update, context: ContextTypes.DEFAU
         if work_type == 'pc_cleaning':
             await query.edit_message_text(
                 "🖥️ <b>Чистка ПК</b>\n\n"
-                "📷 Отправьте фото серийного номера\n"
-                "Или введите серийный номер ПК:",
+                "📷 Отправьте фото/документ с QR или серийным номером\n"
+                "Или отправьте QR payload/серийный номер текстом:",
                 parse_mode='HTML'
             )
             return States.WORK_PC_CLEANING_SERIAL_INPUT
         elif work_type == 'battery_replacement':
             await query.edit_message_text(
                 "🔋 <b>Замена батареи ИБП</b>\n\n"
-                "📷 Отправьте фото серийного номера\n"
-                "Или введите серийный номер ИБП:",
+                "📷 Отправьте фото/документ с QR или серийным номером\n"
+                "Или отправьте QR payload/серийный номер текстом:",
                 parse_mode='HTML'
             )
             return States.WORK_BATTERY_SERIAL_INPUT
         elif work_type == 'component_replacement':
             await query.edit_message_text(
                 "🖥️ <b>Замена компонентов ПК</b>\n\n"
-                "📷 Отправьте фото серийного номера\n"
-                "Или введите серийный номер ПК:",
+                "📷 Отправьте фото/документ с QR или серийным номером\n"
+                "Или отправьте QR payload/серийный номер текстом:",
                 parse_mode='HTML'
             )
             return States.WORK_COMPONENT_SERIAL_INPUT
@@ -1535,13 +1612,6 @@ async def save_component_replacement(context: ContextTypes.DEFAULT_TYPE) -> bool
     """
     try:
         file_path = Path("data/cartridge_replacements.json")  # Оставляем старое имя файла для обратной совместимости
-
-        # Загружаем существующие данные
-        if file_path.exists():
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        else:
-            data = []
 
         # Получаем текущую БД пользователя
         user_id = context._user_id if hasattr(context, '_user_id') else None
@@ -1573,11 +1643,11 @@ async def save_component_replacement(context: ContextTypes.DEFAULT_TYPE) -> bool
             'timestamp': datetime.now().isoformat()
         }
 
-        data.append(record)
-
-        # Сохраняем
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        # Сохраняем запись напрямую в SQLite-backed store
+        saved = append_json_data(str(file_path), record)
+        if not saved:
+            logger.error("Не удалось сохранить замену компонента в локальное хранилище: file=%s", file_path.name)
+            return False
 
         # Логируем с информацией о типе компонента
         component_name = {
@@ -1589,7 +1659,12 @@ async def save_component_replacement(context: ContextTypes.DEFAULT_TYPE) -> bool
             'transfer_belt': 'трансферного ремня'
         }.get(component_type, 'компонента')
 
-        logger.info(f"Сохранена замена {component_name}: {record}")
+        logger.info(
+            "Сохранена замена %s: storage=sqlite file=%s db_name=%s",
+            component_name,
+            file_path.name,
+            db_name,
+        )
         return True
 
     except Exception as e:
@@ -1611,13 +1686,6 @@ async def save_battery_replacement(context: ContextTypes.DEFAULT_TYPE) -> bool:
     """
     try:
         file_path = Path("data/battery_replacements.json")
-
-        # Загружаем существующие данные
-        if file_path.exists():
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        else:
-            data = []
 
         # Получаем текущую БД пользователя
         user_id = context._user_id if hasattr(context, '_user_id') else None
@@ -1678,13 +1746,12 @@ async def save_battery_replacement(context: ContextTypes.DEFAULT_TYPE) -> bool:
             'timestamp': datetime.now().isoformat()
         }
 
-        data.append(record)
+        saved = append_json_data(str(file_path), record)
+        if not saved:
+            logger.error("Не удалось сохранить замену батареи в локальное хранилище: file=%s", file_path.name)
+            return False
 
-        # Сохраняем JSON
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-
-        logger.info(f"Сохранена замена батареи ИБП: {record}")
+        logger.info("Сохранена замена батареи ИБП: storage=sqlite file=%s db_name=%s", file_path.name, db_name)
         return True
 
     except Exception as e:
@@ -1699,13 +1766,6 @@ async def save_pc_cleaning(context: ContextTypes.DEFAULT_TYPE) -> bool:
     """
     try:
         file_path = Path("data/pc_cleanings.json")
-
-        # Загружаем существующие данные
-        if file_path.exists():
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        else:
-            data = []
 
         # Получаем текущую БД пользователя
         user_id = context._user_id if hasattr(context, '_user_id') else None
@@ -1767,13 +1827,12 @@ async def save_pc_cleaning(context: ContextTypes.DEFAULT_TYPE) -> bool:
             'timestamp': datetime.now().isoformat()
         }
 
-        data.append(record)
+        saved = append_json_data(str(file_path), record)
+        if not saved:
+            logger.error("Не удалось сохранить чистку ПК в локальное хранилище: file=%s", file_path.name)
+            return False
 
-        # Сохраняем JSON
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-
-        logger.info(f"Сохранена чистка ПК: {record}")
+        logger.info("Сохранена чистка ПК: storage=sqlite file=%s db_name=%s", file_path.name, db_name)
         return True
 
     except Exception as e:
@@ -2258,59 +2317,46 @@ async def show_component_confirmation_pc(update: Update, context: ContextTypes.D
 
     component_type = context.user_data.get('pc_component_type', '')
 
-    if file_path.exists():
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                replacements = json.load(f)
+    try:
+        replacements = load_json_data(str(file_path), default_content=[])
+        if not isinstance(replacements, list):
+            replacements = []
 
-            # Ищем замены для этого серийного номера и компонента
-            pc_replacements = [
-                r for r in replacements
-                if (r.get('serial_no') == serial_no or r.get('serial_no') == hw_serial_no)
-                and r.get('component_type') == component_type
-            ]
+        pc_replacements = [
+            r for r in replacements
+            if (r.get('serial_no') == serial_no or r.get('serial_no') == hw_serial_no)
+            and r.get('component_type') == component_type
+        ]
 
-            if pc_replacements:
-                # Сортируем по дате (убывание)
-                pc_replacements.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-                last_replacement = pc_replacements[0]
-                last_date = datetime.fromisoformat(last_replacement['timestamp'])
+        if pc_replacements:
+            pc_replacements.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+            last_replacement = pc_replacements[0]
+            last_date = datetime.fromisoformat(last_replacement['timestamp'])
 
-                # Вычисляем сколько времени прошло
-                now = datetime.now()
-                delta = now - last_date
-                days_ago = delta.days
+            days_ago = (datetime.now() - last_date).days
+            if days_ago == 0:
+                time_ago = "сегодня"
+            elif days_ago == 1:
+                time_ago = "вчера"
+            elif days_ago < 7:
+                time_ago = f"{days_ago} дн. назад"
+            elif days_ago < 30:
+                time_ago = f"{days_ago // 7} нед. назад"
+            elif days_ago < 365:
+                time_ago = f"{days_ago // 30} мес. назад"
+            else:
+                time_ago = f"{days_ago // 365} г. назад"
 
-                if days_ago == 0:
-                    time_ago = "сегодня"
-                elif days_ago == 1:
-                    time_ago = "вчера"
-                elif days_ago < 7:
-                    time_ago = f"{days_ago} дн. назад"
-                elif days_ago < 30:
-                    weeks = days_ago // 7
-                    time_ago = f"{weeks} нед. {'назад' if weeks == 1 else 'назад'}"
-                elif days_ago < 365:
-                    months = days_ago // 30
-                    time_ago = f"{months} мес. {'назад' if months == 1 else 'назад'}"
-                else:
-                    years = days_ago // 365
-                    time_ago = f"{years} г. {'назад' if years == 1 else 'назад'}"
+            last_replacement_section = (
+                "\n"
+                f"🧾 <b>История замен</b>\n"
+                f"📅 <b>Последняя:</b> {last_date.strftime('%d.%m.%Y')} в {last_date.strftime('%H:%M')}\n"
+                f"🕒 <b>Давность:</b> {time_ago}\n"
+                f"🔁 <b>Всего замен:</b> {len(pc_replacements)}\n"
+            )
+    except Exception as e:
+        logger.error(f"Error reading component_replacements data: {e}")
 
-                # Формируем красивый блок с информацией о последней замене
-                last_replacement_section = (
-                    "\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🕒 <b>ИСТОРИЯ ЗАМЕН</b>\n"
-                    f"📅 <b>Последняя:</b> {last_date.strftime('%d.%m.%Y')} в {last_date.strftime('%H:%M')}\n"
-                    f"⏳ <b>Прошло:</b> {time_ago}\n"
-                    f"🔢 <b>Всего замен:</b> {len(pc_replacements)}\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
-                )
-        except Exception as e:
-            logger.error(f"Error reading component_replacements.json: {e}")
-
-    # Формируем текст подтверждения
     serial_display = f"{serial_no} / {hw_serial_no}" if hw_serial_no else serial_no
 
     confirmation_text = (
@@ -2355,13 +2401,6 @@ async def save_component_replacement_pc(context: ContextTypes.DEFAULT_TYPE) -> b
     """
     try:
         file_path = Path("data/component_replacements.json")
-
-        # Загружаем существующие данные
-        if file_path.exists():
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        else:
-            data = []
 
         # Получаем текущую БД пользователя
         user_id = context._user_id if hasattr(context, '_user_id') else None
@@ -2429,13 +2468,12 @@ async def save_component_replacement_pc(context: ContextTypes.DEFAULT_TYPE) -> b
             'timestamp': datetime.now().isoformat()
         }
 
-        data.append(record)
+        saved = append_json_data(str(file_path), record)
+        if not saved:
+            logger.error("Не удалось сохранить замену компонента ПК в локальное хранилище: file=%s", file_path.name)
+            return False
 
-        # Сохраняем JSON
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-
-        logger.info(f"Сохранена замена компонента ПК: {record}")
+        logger.info("Сохранена замена компонента ПК: storage=sqlite file=%s db_name=%s", file_path.name, db_name)
         return True
 
     except Exception as e:

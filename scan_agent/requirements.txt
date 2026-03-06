@@ -1,0 +1,4 @@
+requests
+PyMuPDF
+watchdog
+PyYAML

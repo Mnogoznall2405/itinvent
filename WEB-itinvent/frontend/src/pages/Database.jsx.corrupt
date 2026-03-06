@@ -1,0 +1,566 @@
+/**
+ * Database page - view all equipment with tabs, search, multi-select and context menu.
+ */
+import { useState, useEffect, useRef, useCallback } from "react";
+import {
+  Box,
+  Typography,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+  TextField,
+  InputAdornment,
+  CircularProgress,
+  Tabs,
+  Tab,
+  Button,
+  Menu,
+  MenuItem,
+  ListItemIcon,
+  ListItemText,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  Grid,
+  IconButton,
+  Divider,
+  Chip,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  FormControl,
+  InputLabel,
+  Select,
+} from "@mui/material";
+import SearchIcon from "@mui/icons-material/Search";
+import CloseIcon from "@mui/icons-material/Close";
+import SwapHorizIcon from "@mui/icons-material/SwapHoriz";
+import BuildIcon from "@mui/icons-material/Build";
+import CleaningServicesIcon from "@mui/icons-material/CleaningServices";
+import BatteryChargingFullIcon from "@mui/icons-material/BatteryChargingFull";
+import PrintIcon from "@mui/icons-material/Print";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import MainLayout from "../components/layout/MainLayout";
+import { equipmentAPI } from "../api/client";
+
+function Database() {
+  const [loading, setLoading] = useState(true);
+  const [equipmentTypes, setEquipmentTypes] = useState([]);
+  const [branches, setBranches] = useState([]);
+  const [selectedCategory, setSelectedCategory] = useState("all");
+  const [selectedBranch, setSelectedBranch] = useState("");
+  const [equipment, setEquipment] = useState({});
+  const [total, setTotal] = useState(0);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
+
+  const [selectedItems, setSelectedItems] = useState([]);
+  const [lastSelectedIndex, setLastSelectedIndex] = useState(null);
+  const [contextMenu, setContextMenu] = useState(null);
+  const [detailModal, setDetailModal] = useState({ open: false, data: null, loading: false });
+
+  const tableRef = useRef(null);
+
+  const fetchEquipmentTypes = async () => {
+    try {
+      const response = await equipmentAPI.getTypes();
+      console.log("Equipment types:", response);
+      setEquipmentTypes(response || []);
+    } catch (error) {
+      console.error("Error fetching types:", error);
+    }
+  };
+
+  const fetchBranches = async () => {
+    try {
+      const response = await fetch("/api/v1/equipment/branches-list", {
+        headers: { "Authorization": `Bearer ${localStorage.getItem("access_token")}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setBranches(data || []);
+      }
+    } catch (error) {
+      console.error("Error fetching branches:", error);
+    }
+  };
+
+  const fetchEquipment = async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ limit: 500 });
+      if (selectedBranch) {
+        params.append("branch", selectedBranch);
+      }
+      if (selectedCategory && selectedCategory !== "all") {
+        params.append("type_no", selectedCategory);
+      }
+      const response = await fetch(`/api/v1/equipment/all-grouped?${params}`, {
+        headers: { "Authorization": `Bearer ${localStorage.getItem("access_token")}` },
+      });
+      if (response.ok) {
+        const result = await response.json();
+        setEquipment(result.grouped || {});
+        setTotal(result.total || 0);
+      }
+    } catch (error) {
+      console.error("Error fetching equipment:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchEquipmentTypes();
+    fetchBranches();
+  }, []);
+
+  useEffect(() => {
+    if (!isSearching) {
+      fetchEquipment();
+    }
+  }, [selectedCategory, selectedBranch, isSearching]);
+
+  const getFlatItems = useCallback(() => {
+    const items = [];
+    Object.values(equipment).forEach((locations) => {
+      Object.values(locations).forEach((locationItems) => {
+        items.push(...locationItems);
+      });
+    });
+    return items;
+  }, [equipment]);
+
+  const handleItemSelect = (invNo, index, event) => {
+    // Prevent event bubbling
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    // Ctrl/Cmd + Click: Toggle selection
+    if (event?.ctrlKey || event?.metaKey) {
+      setSelectedItems((prev) =>
+        prev.includes(invNo)
+          ? prev.filter((id) => id !== invNo)
+          : [...prev, invNo]
+      );
+      setLastSelectedIndex(index);
+      return;
+    }
+
+    // Shift + Click: Range selection
+    if (event?.shiftKey && lastSelectedIndex !== null) {
+      const flatItems = isSearching ? searchResults : getFlatItems();
+      const start = Math.min(lastSelectedIndex, index);
+      const end = Math.max(lastSelectedIndex, index);
+      const rangeInvNos = flatItems.slice(start, end + 1).map((item) => item.INV_NO ?? item.inv_no);
+
+      setSelectedItems(() => {
+        // Replace selection with range
+        return [...rangeInvNos];
+      });
+      return;
+    }
+
+    // Regular Click: Single selection (replace entire selection)
+    setSelectedItems([invNo]);
+    setLastSelectedIndex(index);
+  };
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+    setSearchLoading(true);
+    setIsSearching(true);
+    setSelectedItems([]);
+    try {
+      const result = await equipmentAPI.searchUniversal(searchQuery, 1, 200);
+      setSearchResults(result.equipment || []);
+    } catch (error) {
+      console.error("Search error:", error);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const handleSearchKeyPress = (e) => {
+    if (e.key === "Enter") handleSearch();
+  };
+
+  const clearSearch = () => {
+    setSearchQuery("");
+    setSearchResults([]);
+    setIsSearching(false);
+  };
+
+  const handleContextMenu = (event, invNo) => {
+    event.preventDefault();
+    // If right-clicking on a non-selected item, select just that item
+    if (!selectedItems.includes(invNo)) {
+      setSelectedItems([invNo]);
+      // Find index for lastSelectedIndex
+      const flatItems = isSearching ? searchResults : getFlatItems();
+      const idx = flatItems.findIndex((item) => (item.INV_NO ?? item.inv_no) === invNo);
+      setLastSelectedIndex(idx);
+    }
+    setContextMenu({
+      mouseX: event.clientX,
+      mouseY: event.clientY,
+    });
+  };
+
+  const closeContextMenu = () => {
+    setContextMenu(null);
+  };
+
+  const openDetailModal = async (invNo) => {
+    setDetailModal({ open: true, data: null, loading: true });
+    closeContextMenu();
+    try {
+      const response = await equipmentAPI.getByInvNo(invNo);
+      setDetailModal({ open: true, data: response, loading: false });
+    } catch (error) {
+      console.error("Error fetching details:", error);
+      setDetailModal({ open: false, data: null, loading: false });
+    }
+  };
+
+  const closeDetailModal = () => {
+    setDetailModal({ open: false, data: null, loading: false });
+  };
+
+  const handleBulkAction = (action) => {
+    closeContextMenu();
+    console.log(`Action: ${action}, Selected:`, selectedItems);
+  };
+
+  const renderTable = (items, startIndex = 0, parentKey = "") => (
+    <Table size="small">
+      <TableHead>
+        <TableRow>
+          <TableCell>Инв. №</TableCell>
+          <TableCell>Серийный №</TableCell>
+          <TableCell>Тип</TableCell>
+          <TableCell>Модель</TableCell>
+          <TableCell>Сотрудник</TableCell>
+          <TableCell>Статус</TableCell>
+        </TableRow>
+      </TableHead>
+      <TableBody>
+        {items.map((item, idx) => {
+          const invNo = item.INV_NO ?? item.inv_no;
+          const isSelected = selectedItems.includes(invNo);
+          const globalIdx = startIndex + idx;
+          const uniqueKey = `${parentKey}-${invNo}-${idx}`; // Unique key for each row
+
+          return (
+            <TableRow
+              key={uniqueKey}
+              hover
+              selected={isSelected}
+              onClick={(e) => handleItemSelect(invNo, globalIdx, e)}
+              onDoubleClick={() => openDetailModal(invNo)}
+              onContextMenu={(e) => handleContextMenu(e, invNo)}
+              sx={{
+                cursor: "pointer",
+                "&.Mui-selected": {
+                  backgroundColor: "primary.main",
+                  "&:hover": {
+                    backgroundColor: "primary.dark",
+                  },
+                },
+              }}
+            >
+              <TableCell sx={{ fontWeight: isSelected ? "bold" : "normal" }}>
+                {invNo || "-"}
+              </TableCell>
+              <TableCell>{item.SERIAL_NO ?? item.serial_no || item.HW_SERIAL_NO ?? item.hw_serial_no || "-"}</TableCell>
+              <TableCell>{item.TYPE_NAME ?? item.type_name || "-"}</TableCell>
+              <TableCell>{item.MODEL_NAME ?? item.model_name || "-"}</TableCell>
+              <TableCell>{item.OWNER_DISPLAY_NAME ?? item.employee_name || "-"}</TableCell>
+              <TableCell>
+                {item.DESCR ?? item.status_name ?? item.status ? (
+                  <Chip
+                    label={item.DESCR ?? item.status_name ?? item.status}
+                    size="small"
+                    color={isSelected ? "primary" : "default"}
+                    variant={isSelected ? "filled" : "outlined"}
+                  />
+                ) : "-"}
+              </TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
+  );
+
+  if (loading && !isSearching) {
+    return (
+      <MainLayout>
+        <Box sx={{ display: "flex", justifyContent: "center", mt: 4 }}>
+          <CircularProgress />
+        </Box>
+      </MainLayout>
+    );
+  }
+
+  const flatItems = isSearching ? searchResults : [];
+
+  return (
+    <MainLayout>
+      <Box>
+        <Typography variant="h4" gutterBottom>
+          База данных
+        </Typography>
+
+        <Box sx={{ borderBottom: 1, borderColor: "divider", mb: 2 }}>
+          <Tabs
+            value={selectedCategory}
+            onChange={(e, v) => setSelectedCategory(v)}
+            variant="scrollable"
+            scrollButtons="auto"
+          >
+            <Tab label="Все" value="all" />
+            {equipmentTypes.map((type) => (
+              <Tab
+                key={`${type.ci_type}-${type.type_no}`}
+                label={type.type_name}
+                value={String(type.type_no)}
+              />
+            ))}
+          </Tabs>
+        </Box>
+
+        <Box sx={{ mb: 2, display: "flex", gap: 2, alignItems: "center", flexWrap: "wrap" }}>
+          <TextField
+            placeholder="Поиск..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyPress={handleSearchKeyPress}
+            sx={{ flexGrow: 1, minWidth: 200 }}
+            size="small"
+            InputProps={{
+              endAdornment: (
+                <InputAdornment position="end">
+                  {searchQuery && (
+                    <IconButton size="small" onClick={clearSearch}>
+                      <CloseIcon />
+                    </IconButton>
+                  )}
+                  <IconButton onClick={handleSearch} disabled={!searchQuery.trim() || searchLoading}>
+                    <SearchIcon />
+                  </IconButton>
+                </InputAdornment>
+              ),
+            }}
+          />
+
+          <FormControl sx={{ minWidth: 180 }} size="small">
+            <InputLabel>Филиал</InputLabel>
+            <Select
+              value={selectedBranch}
+              onChange={(e) => setSelectedBranch(e.target.value)}
+              label="Филиал"
+            >
+              <MenuItem value="">Все филиалы</MenuItem>
+              {branches.map((branch) => (
+                <MenuItem key={branch.BRANCH_NO} value={branch.BRANCH_NAME}>
+                  {branch.BRANCH_NAME}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+
+          <Typography variant="body2" color="text.secondary">
+            Выбрано: {selectedItems.length}
+          </Typography>
+        </Box>
+
+        {selectedItems.length > 0 && (
+          <Paper sx={{ p: 1, mb: 2, display: "flex", gap: 1, alignItems: "center", flexWrap: "wrap", bgcolor: "action.selectedBackground" }}>
+            <Chip
+              label={`Выбрано: ${selectedItems.length}`}
+              color="primary"
+              size="small"
+              sx={{ fontWeight: "bold" }}
+            />
+            <Button size="small" startIcon={<SwapHorizIcon />} onClick={() => handleBulkAction("transfer")}>
+              Переместить
+            </Button>
+            <Button size="small" startIcon={<PrintIcon />} onClick={() => handleBulkAction("cartridge")}>
+              Замена картриджа
+            </Button>
+            <Button size="small" startIcon={<BatteryChargingFullIcon />} onClick={() => handleBulkAction("battery")}>
+              Замена батареи
+            </Button>
+            <Button size="small" startIcon={<CleaningServicesIcon />} onClick={() => handleBulkAction("cleaning")}>
+              Чистка ПК
+            </Button>
+            <Button size="small" onClick={() => setSelectedItems([])}>
+              Очистить
+            </Button>
+          </Paper>
+        )}
+
+        {searchLoading ? (
+          <Box sx={{ display: "flex", justifyContent: "center", p: 3 }}>
+            <CircularProgress />
+          </Box>
+        ) : isSearching ? (
+          searchResults.length > 0 ? (
+            <TableContainer component={Paper} variant="outlined">
+              {renderTable(searchResults)}
+            </TableContainer>
+          ) : (
+            <Typography color="text.secondary">Ничего не найдено</Typography>
+          )
+        ) : Object.keys(equipment).length > 0 ? (
+          Object.keys(equipment).map((branchName) => {
+            const locations = equipment[branchName];
+            const branchTotal = Object.values(locations).reduce((a, b) => a + b.length, 0);
+            return (
+              <Accordion key={branchName} defaultExpanded>
+                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                  <Typography variant="h6">{branchName} ({branchTotal})</Typography>
+                </AccordionSummary>
+                <AccordionDetails>
+                  {Object.keys(locations).map((locationName) => (
+                    <Box key={locationName} sx={{ mb: 3 }}>
+                      <Typography variant="subtitle1" sx={{ mb: 1, fontWeight: "bold" }}>
+                        📍 {locationName} ({locations[locationName].length})
+                      </Typography>
+                      <TableContainer component={Paper} variant="outlined">
+                        {renderTable(locations[locationName])}
+                      </TableContainer>
+                    </Box>
+                  ))}
+                </AccordionDetails>
+              </Accordion>
+            );
+          })
+        ) : (
+          <Typography color="text.secondary">Нет данных</Typography>
+        )}
+
+        <Dialog open={detailModal.open} onClose={closeDetailModal} maxWidth="md" fullWidth>
+          <DialogTitle sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>Детали оборудования</span>
+            <IconButton onClick={closeDetailModal} size="small">
+              <CloseIcon />
+            </IconButton>
+          </DialogTitle>
+          <DialogContent>
+            {detailModal.loading ? (
+              <Box sx={{ display: "flex", justifyContent: "center", p: 3 }}>
+                <CircularProgress />
+              </Box>
+            ) : detailModal.data ? (
+              <Grid container spacing={2}>
+                <Grid item xs={12}>
+                  <Typography variant="h6">{detailModal.data.MODEL_NAME ?? detailModal.data.model_name || "Модель не указана"}</Typography>
+                </Grid>
+                <Grid item xs={12}><Divider /></Grid>
+
+                <Grid item xs={6}>
+                  <Typography variant="caption" color="text.secondary">Инвентарный номер</Typography>
+                  <Typography>{detailModal.data.INV_NO ?? detailModal.data.inv_no || "-"}</Typography>
+                </Grid>
+                <Grid item xs={6}>
+                  <Typography variant="caption" color="text.secondary">Серийный номер</Typography>
+                  <Typography>{detailModal.data.SERIAL_NO ?? detailModal.data.serial_no || detailModal.data.HW_SERIAL_NO ?? detailModal.data.hw_serial_no || "-"}</Typography>
+                </Grid>
+
+                <Grid item xs={6}>
+                  <Typography variant="caption" color="text.secondary">Тип оборудования</Typography>
+                  <Typography>{detailModal.data.TYPE_NAME ?? detailModal.data.type_name || "-"}</Typography>
+                </Grid>
+                <Grid item xs={6}>
+                  <Typography variant="caption" color="text.secondary">Модель</Typography>
+                  <Typography>{detailModal.data.MODEL_NAME ?? detailModal.data.model_name || "-"}</Typography>
+                </Grid>
+
+                <Grid item xs={6}>
+                  <Typography variant="caption" color="text.secondary">Производитель</Typography>
+                  <Typography>{detailModal.data.VENDOR_NAME ?? detailModal.data.vendor_name || "-"}</Typography>
+                </Grid>
+                <Grid item xs={6}>
+                  <Typography variant="caption" color="text.secondary">Статус</Typography>
+                  <Typography>{detailModal.data.DESCR ?? detailModal.data.status_name ?? detailModal.data.status || "-"}</Typography>
+                </Grid>
+
+                <Grid item xs={12}><Divider /></Grid>
+
+                <Grid item xs={6}>
+                  <Typography variant="caption" color="text.secondary">Сотрудник</Typography>
+                  <Typography>{detailModal.data.OWNER_DISPLAY_NAME ?? detailModal.data.employee_name || "-"}</Typography>
+                </Grid>
+                <Grid item xs={6}>
+                  <Typography variant="caption" color="text.secondary">Отдел</Typography>
+                  <Typography>{detailModal.data.OWNER_DEPT ?? detailModal.data.employee_dept || "-"}</Typography>
+                </Grid>
+
+                <Grid item xs={6}>
+                  <Typography variant="caption" color="text.secondary">Филиал</Typography>
+                  <Typography>{detailModal.data.BRANCH_NAME ?? detailModal.data.branch_name || "-"}</Typography>
+                </Grid>
+                <Grid item xs={6}>
+                  <Typography variant="caption" color="text.secondary">Локация</Typography>
+                  <Typography>{detailModal.data.LOCATION_NAME ?? detailModal.data.location_name ?? detailModal.data.location || "-"}</Typography>
+                </Grid>
+
+                {detailModal.data.description && (
+                  <>
+                    <Grid item xs={12}><Divider /></Grid>
+                    <Grid item xs={12}>
+                      <Typography variant="caption" color="text.secondary">Описание</Typography>
+                      <Typography>{detailModal.data.description}</Typography>
+                    </Grid>
+                  </>
+                )}
+              </Grid>
+            ) : (
+              <Typography>Ошибка загрузки данных</Typography>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        <Menu
+          open={contextMenu !== null}
+          onClose={closeContextMenu}
+          anchorReference="anchorPosition"
+          anchorPosition={contextMenu !== null ? { top: contextMenu.mouseY, left: contextMenu.mouseX } : undefined}
+        >
+          <MenuItem onClick={() => openDetailModal(selectedItems[0])}>
+            <ListItemIcon><SwapHorizIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>Просмотр</ListItemText>
+          </MenuItem>
+          <MenuItem onClick={() => handleBulkAction("transfer")}>
+            <ListItemIcon><SwapHorizIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>Переместить</ListItemText>
+          </MenuItem>
+          <Divider />
+          <MenuItem onClick={() => handleBulkAction("cartridge")}>
+            <ListItemIcon><PrintIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>Замена картриджа</ListItemText>
+          </MenuItem>
+          <MenuItem onClick={() => handleBulkAction("battery")}>
+            <ListItemIcon><BatteryChargingFullIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>Замена батареи</ListItemText>
+          </MenuItem>
+          <MenuItem onClick={() => handleBulkAction("cleaning")}>
+            <ListItemIcon><CleaningServicesIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>Чистка ПК</ListItemText>
+          </MenuItem>
+        </Menu>
+      </Box>
+    </MainLayout>
+  );
+}
+
+export default Database;

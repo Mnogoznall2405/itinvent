@@ -327,6 +327,104 @@ class UniversalInventoryDB:
         finally:
             cursor.close()
             conn.close()
+
+    def find_by_inventory_number(self, inv_no: str) -> Dict[str, Any]:
+        """
+        Точный поиск оборудования по инвентарному номеру (INV_NO).
+        """
+        inv_no_value = str(inv_no or "").strip()
+        if not inv_no_value:
+            return {}
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            query_with_location = """
+            SELECT
+                i.ID,
+                i.SERIAL_NO,
+                i.HW_SERIAL_NO,
+                i.INV_NO,
+                i.PART_NO,
+                i.CI_TYPE,
+                t.TYPE_NAME,
+                i.MODEL_NO,
+                m.MODEL_NAME,
+                v.VENDOR_NAME as MANUFACTURER,
+                l.DESCR as LOCATION,
+                i.EMPL_NO,
+                o.OWNER_DISPLAY_NAME as EMPLOYEE_NAME,
+                o.OWNER_DEPT as EMPLOYEE_DEPT,
+                b.BRANCH_NAME as BRANCH_NAME,
+                s.DESCR as STATUS,
+                i.DESCR as DESCRIPTION
+            FROM ITEMS i
+            LEFT JOIN CI_TYPES t ON i.CI_TYPE = t.CI_TYPE AND i.TYPE_NO = t.TYPE_NO
+            LEFT JOIN CI_MODELS m ON i.MODEL_NO = m.MODEL_NO AND i.CI_TYPE = m.CI_TYPE
+            LEFT JOIN VENDORS v ON m.VENDOR_NO = v.VENDOR_NO
+            LEFT JOIN LOCATIONS l ON i.LOC_NO = l.LOC_NO
+            LEFT JOIN OWNERS o ON i.EMPL_NO = o.OWNER_NO
+            LEFT JOIN BRANCHES b ON i.BRANCH_NO = b.BRANCH_NO
+            LEFT JOIN STATUS s ON i.STATUS_NO = s.STATUS_NO
+            WHERE (
+                CAST(i.INV_NO AS VARCHAR(64)) = ?
+                OR TRY_CONVERT(BIGINT, i.INV_NO) = TRY_CONVERT(BIGINT, ?)
+            )
+            """
+
+            query_without_location = """
+            SELECT
+                i.ID,
+                i.SERIAL_NO,
+                i.HW_SERIAL_NO,
+                i.INV_NO,
+                i.PART_NO,
+                i.CI_TYPE,
+                t.TYPE_NAME,
+                i.MODEL_NO,
+                m.MODEL_NAME,
+                v.VENDOR_NAME as MANUFACTURER,
+                'Не указана' as LOCATION,
+                i.EMPL_NO,
+                o.OWNER_DISPLAY_NAME as EMPLOYEE_NAME,
+                o.OWNER_DEPT as EMPLOYEE_DEPT,
+                'Не указан' as BRANCH_NAME,
+                s.DESCR as STATUS,
+                i.DESCR as DESCRIPTION
+            FROM ITEMS i
+            LEFT JOIN CI_TYPES t ON i.CI_TYPE = t.CI_TYPE AND i.TYPE_NO = t.TYPE_NO
+            LEFT JOIN CI_MODELS m ON i.MODEL_NO = m.MODEL_NO AND i.CI_TYPE = m.CI_TYPE
+            LEFT JOIN VENDORS v ON m.VENDOR_NO = v.VENDOR_NO
+            LEFT JOIN OWNERS o ON i.EMPL_NO = o.OWNER_NO
+            LEFT JOIN STATUS s ON i.STATUS_NO = s.STATUS_NO
+            WHERE (
+                CAST(i.INV_NO AS VARCHAR(64)) = ?
+                OR TRY_CONVERT(BIGINT, i.INV_NO) = TRY_CONVERT(BIGINT, ?)
+            )
+            """
+
+            row = self._execute_query_with_location_fallback(
+                cursor,
+                query_with_location,
+                query_without_location,
+                (inv_no_value, inv_no_value),
+            )
+            if not row:
+                logger.info(f"Оборудование с инвентарным номером {inv_no_value} не найдено")
+                return {}
+
+            columns = [column[0] for column in cursor.description]
+            result = dict(zip(columns, row))
+            logger.info(f"Найдено оборудование с инвентарным номером: {inv_no_value}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Ошибка при поиске по инвентарному номеру {inv_no_value}: {e}")
+            raise
+        finally:
+            cursor.close()
+            conn.close()
     
     def search_equipment(self, search_term: str, limit: int = 10) -> List[Dict[str, Any]]:
         """

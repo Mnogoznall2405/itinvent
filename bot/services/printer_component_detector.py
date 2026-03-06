@@ -21,6 +21,7 @@ import re
 from openai import OpenAI
 
 from bot.config import config
+from bot.local_json_store import load_json_data, save_json_data
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +44,9 @@ class PrinterComponentDetector:
     def _load_cartridge_db(self) -> Dict[str, Any]:
         """Загружает базу данных картриджей"""
         try:
-            if os.path.exists(self.cartridge_db_file):
-                with open(self.cartridge_db_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+            data = load_json_data(self.cartridge_db_file, default_content={})
+            if isinstance(data, dict):
+                return data
         except Exception as e:
             logger.error(f"Error loading cartridge database: {e}")
 
@@ -152,9 +153,9 @@ class PrinterComponentDetector:
     def _load_cache(self) -> Dict[str, Any]:
         """Загружает кэш из файла"""
         try:
-            if os.path.exists(self.cache_file):
-                with open(self.cache_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+            data = load_json_data(self.cache_file, default_content={})
+            if isinstance(data, dict):
+                return data
         except Exception as e:
             logger.error(f"Error loading component cache: {e}")
 
@@ -163,9 +164,7 @@ class PrinterComponentDetector:
     def _save_cache(self):
         """Сохраняет кэш в файл"""
         try:
-            os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
-            with open(self.cache_file, 'w', encoding='utf-8') as f:
-                json.dump(self.cache, f, ensure_ascii=False, indent=2)
+            save_json_data(self.cache_file, self.cache)
         except Exception as e:
             logger.error(f"Error saving component cache: {e}")
 
@@ -173,12 +172,10 @@ class PrinterComponentDetector:
         """Мигрирует старый кэш цветов в новый формат"""
         old_cache_file = "data/printer_color_cache.json"
 
-        if not os.path.exists(old_cache_file):
-            return
-
         try:
-            with open(old_cache_file, 'r', encoding='utf-8') as f:
-                old_cache = json.load(f)
+            old_cache = load_json_data(old_cache_file, default_content={})
+            if not isinstance(old_cache, dict) or not old_cache:
+                return
 
             migrated = False
             for printer_name, old_data in old_cache.items():
@@ -216,9 +213,6 @@ class PrinterComponentDetector:
                 logger.info(f"Migrated {len(old_cache)} entries from old color cache")
 
                 # Резервное копирование старого файла
-                backup_file = f"{old_cache_file}.backup"
-                os.rename(old_cache_file, backup_file)
-                logger.info(f"Old cache backed up to {backup_file}")
 
         except Exception as e:
             logger.error(f"Error migrating old cache: {e}")

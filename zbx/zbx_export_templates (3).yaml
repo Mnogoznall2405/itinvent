@@ -1,0 +1,1102 @@
+zabbix_export:
+  version: '7.4'
+  template_groups:
+    - uuid: 60f1dce8720d41eab748470cd7d4746e
+      name: Printers
+    - uuid: 7df96b18c230490a9a0a9e2307226338
+      name: Templates
+  templates:
+    - uuid: 8490aa280d764d1cb85f9abf7ef9ef77
+      template: 'Printer Xerox VercaLink C7020'
+      name: 'Printer Xerox VercaLink C7020'
+      description: |
+        ## Overview
+        
+        I upgraded older version Xerox template 7225. Its orchestrated with template Grafana. Zabbix apliance 3.4.12
+        Work for C7020, C7030
+        
+        [Dasboard Geafana Xerox 7220](https://grafana.com/api/dashboards/8369/revisions/1/download)
+      groups:
+        - name: Printers
+        - name: Templates
+      items:
+        - uuid: 2361518c7e6347019e9abb303b63194a
+          name: 'Drum Cartridge level % - black'
+          type: CALCULATED
+          key: black.cartridge.drum
+          delay: '60'
+          history: 7d
+          units: '%'
+          params: '100*last(//drum.black.now)/last(//drum.black.max)'
+          tags:
+            - tag: Application
+              value: 'Consumables level %'
+        - uuid: 1dc1cc63abc04d1bb43fa20caf704ac1
+          name: 'Type of cartridge - black'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.6.1.1
+          key: black.cartridge.type
+          delay: '60'
+          history: 7d
+          value_type: TEXT
+          tags:
+            - tag: Application
+              value: 'Printer information'
+        - uuid: d5ae629c9d6e4df18a139ab7db85c1bd
+          name: 'Type of drum - black'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.6.1.6
+          key: black.drum.type
+          delay: '21600'
+          history: 7d
+          value_type: TEXT
+          tags:
+            - tag: Application
+              value: 'Printer information'
+        - uuid: 4f6ef8f061124b9f937c5bee0d363014
+          name: 'Cartridge toner level % - black'
+          type: CALCULATED
+          key: BlackCartridgeToner
+          delay: '60'
+          history: 7d
+          units: '%'
+          params: '100*last(//ink.black.now)/last(//ink.black.max)'
+          tags:
+            - tag: Application
+              value: 'Consumables level %'
+        - uuid: e1b300e9c4fb4d8c8dacbdb721bcf6d8
+          name: 'Drum cartridge level % - cyan'
+          type: CALCULATED
+          key: cyan.cartridge.drum
+          delay: '60'
+          history: 7d
+          units: '%'
+          params: '100*last(//drum.cyan.now)/last(//drum.cyan.max)'
+          tags:
+            - tag: Application
+              value: 'Consumables level %'
+        - uuid: 7128a8fe3d424e19803d9d41f5db6ed2
+          name: 'Cartridge toner level % - cyan'
+          type: CALCULATED
+          key: cyan.cartridge.toner
+          delay: '60'
+          history: 7d
+          units: '%'
+          params: '100*last(//ink.cyan.now)/last(//ink.cyan.max)'
+          tags:
+            - tag: Application
+              value: 'Consumables level %'
+        - uuid: 9fd9394698234fe8a54155f76b6f2efc
+          name: 'Type of cartridge - cyan'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.6.1.4
+          key: cyan.cartridge.type
+          delay: '60'
+          history: 7d
+          value_type: TEXT
+          tags:
+            - tag: Application
+              value: 'Printer information'
+        - uuid: b1469634aa884f24b1959402e533fdae
+          name: 'Type of drum - cyan'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.6.1.9
+          key: cyan.drum.type
+          delay: '21600'
+          history: 7d
+          value_type: TEXT
+          tags:
+            - tag: Application
+              value: 'Printer information'
+        - uuid: 6e5655621bbf410ca18143a315bb0a91
+          name: 'Max drum cartridge level - black'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.8.1.6
+          key: drum.black.max
+          delay: '300'
+          history: 7d
+          tags:
+            - tag: Application
+              value: 'Consumables level'
+        - uuid: 6467a299d31f495a9c56d2d88beede07
+          name: 'Current drum unit level - black'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.9.1.6
+          key: drum.black.now
+          delay: '60'
+          history: 7d
+          tags:
+            - tag: Application
+              value: 'Consumables level %'
+        - uuid: 95220d764d6c4998920fb7b492bb06ab
+          name: 'Max drum cartridge level - cyan'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.8.1.9
+          key: drum.cyan.max
+          delay: '300'
+          history: 7d
+          tags:
+            - tag: Application
+              value: 'Consumables level'
+        - uuid: 177b8249c7e347d68d862b4034115a47
+          name: 'Current drum unit level - cyan'
+          type: SNMP_AGENT
+          snmp_oid: 1.3.6.1.2.1.43.11.1.1.9.1.9
+          key: drum.cyan.now
+          delay: '60'
+          history: 7d
+          tags:
+            - tag: Application
+              value: 'Consumables level %'
+        - uuid: c8ec05e363024eebabd38684f1708c65
+          name: 'Max drum cartridge level - magenta'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.8.1.8
+          key: drum.magenta.max
+          delay: '300'
+          history: 7d
+          tags:
+            - tag: Application
+              value: 'Consumables level'
+        - uuid: 23f3a5aad5724a49b8d36877618e4c53
+          name: 'Current drum unit level - magenta'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.9.1.8
+          key: drum.magenta.now
+          delay: '60'
+          history: 7d
+          tags:
+            - tag: Application
+              value: 'Consumables level %'
+        - uuid: 306f6f5a52c84aa4b005b15220ce6fca
+          name: 'Max drum cartridge level - yellow'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.8.1.7
+          key: drum.yellow.max
+          delay: '300'
+          history: 7d
+          tags:
+            - tag: Application
+              value: 'Consumables level'
+        - uuid: 544b347fae5b4652a6beed9a65868a52
+          name: 'Current drum unit level - yellow'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.9.1.7
+          key: drum.yellow.now
+          delay: '60'
+          history: 7d
+          tags:
+            - tag: Application
+              value: 'Consumables level %'
+        - uuid: 544ff305468844bd95cefe53c77507f9
+          name: 'Fuser %'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.9.1.9
+          key: fuser.percent
+          delay: '60'
+          history: 7d
+          units: '%'
+          tags:
+            - tag: Application
+              value: 'Consumables level %'
+        - uuid: 136b10bda5c9486883175e25a80784b1
+          name: 'ICMP ping'
+          type: SIMPLE
+          key: icmpping
+          tags:
+            - tag: Application
+              value: ICMP
+          triggers:
+            - uuid: c21afdc0d5c740b0874ddf4ef3f60d04
+              expression: 'max(/Printer Xerox VercaLink C7020/icmpping,#3)=0'
+              name: '{HOST.NAME} is unavailable by ICMP'
+              priority: HIGH
+        - uuid: 64a61f9036f04586a04a398c2197ef4c
+          name: 'Max cartridge toner level - black'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.8.1.1
+          key: ink.black.max
+          delay: '300'
+          history: 7d
+          tags:
+            - tag: Application
+              value: 'Consumables level'
+        - uuid: 7100c0b7e1144f45b35f1a97887fde4f
+          name: 'Current cartridge toner level - black'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.9.1.1
+          key: ink.black.now
+          delay: '60'
+          history: 7d
+          tags:
+            - tag: Application
+              value: 'Consumables level'
+        - uuid: b45e0ce7e99a4dd29d6294fc59dc65ac
+          name: 'Max cartridge toner level - cyan'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.8.1.4
+          key: ink.cyan.max
+          delay: '300'
+          history: 7d
+          tags:
+            - tag: Application
+              value: 'Consumables level'
+        - uuid: 2da7c92985f24e9fbe584c038e912552
+          name: 'Current cartridge toner level - cyan'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.9.1.4
+          key: ink.cyan.now
+          delay: '60'
+          history: 7d
+          tags:
+            - tag: Application
+              value: 'Consumables level'
+        - uuid: 4aa24eeda0264909b344df0eb191ab40
+          name: 'Max cartridge toner level - magenta'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.8.1.3
+          key: ink.magenta.max
+          delay: '300'
+          history: 7d
+          tags:
+            - tag: Application
+              value: 'Consumables level'
+        - uuid: d9445569f63a438dbffd3fe6b7b68207
+          name: 'Current cartridge toner level - magenta'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.9.1.3
+          key: ink.magenta.now
+          delay: '60'
+          history: 7d
+          tags:
+            - tag: Application
+              value: 'Consumables level'
+        - uuid: 72cb4a0a239e4b7dbf09468f5f3c35e2
+          name: 'Max cartridge toner level - yellow'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.8.1.2
+          key: ink.yellow.max
+          delay: '300'
+          history: 7d
+          tags:
+            - tag: Application
+              value: 'Consumables level'
+        - uuid: 4cd439ce95614d1b9ab6dcff0ba829ff
+          name: 'Current cartridge toner level - yellow'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.9.1.2
+          key: ink.yellow.now
+          delay: '60'
+          history: 7d
+          tags:
+            - tag: Application
+              value: 'Consumables level'
+        - uuid: 77dcc0267a4345cdb4282d7cec43a23b
+          name: 'Drum cartridge level % - magenta'
+          type: CALCULATED
+          key: magenta.cartridge.drum
+          delay: '60'
+          history: 7d
+          units: '%'
+          params: '100*last(//drum.magenta.now)/last(//drum.magenta.max)'
+          tags:
+            - tag: Application
+              value: 'Consumables level %'
+        - uuid: 5464c52ba0374ad581f332d9b6c8eb7c
+          name: 'Cartridge toner level % - magenta'
+          type: CALCULATED
+          key: magenta.cartridge.toner
+          delay: '60'
+          history: 7d
+          units: '%'
+          params: '100*last(//ink.magenta.now)/last(//ink.magenta.max)'
+          tags:
+            - tag: Application
+              value: 'Consumables level %'
+        - uuid: 330aacb5c8844943887234ca9e733a48
+          name: 'Type of cartridge - magenta'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.6.1.3
+          key: magenta.cartridge.type
+          delay: '21600'
+          history: 7d
+          value_type: TEXT
+          tags:
+            - tag: Application
+              value: 'Printer information'
+        - uuid: 43d78a64dd0846e583f5448e188967f7
+          name: 'Type of drum - magenta'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.6.1.8
+          key: magenta.drum.type
+          delay: '21600'
+          history: 7d
+          value_type: TEXT
+          tags:
+            - tag: Application
+              value: 'Printer information'
+        - uuid: 19405b90f9b64c529fbcfc3eb68f7126
+          name: 'Printer model'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.1.5.0
+          key: model
+          delay: '60'
+          history: 7d
+          value_type: TEXT
+          inventory_link: TYPE
+          tags:
+            - tag: Application
+              value: 'Printer information'
+        - uuid: 635504c895ce4be9b78f86f96fa861f8
+          name: 'Pages printed - black'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.4.1.253.8.53.13.2.1.6.1.20.34
+          key: pages.printed.black
+          delay: '60'
+          history: 356d
+          value_type: TEXT
+          tags:
+            - tag: Application
+              value: 'Pages printed'
+        - uuid: 9293cbe0534d4b3db24b8cf61b07e5f3
+          name: 'Pages printed - color'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.4.1.253.8.53.13.2.1.6.1.20.33
+          key: pages.printed.color
+          delay: '60'
+          history: 356d
+          value_type: TEXT
+          tags:
+            - tag: Application
+              value: 'Pages printed'
+        - uuid: 74b4f93a8f5441d5b174a6baa56cf8b3
+          name: 'Pages printed - total'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.4.1.253.8.53.13.2.1.6.1.20.1
+          key: pages.printed.total
+          delay: '60'
+          history: 356d
+          value_type: TEXT
+          tags:
+            - tag: Application
+              value: 'Pages printed'
+        - uuid: 715b154d8345426e8efc7d0650e09f41
+          name: 'Printer location'
+          type: SNMP_AGENT
+          snmp_oid: 1.3.6.1.2.1.1.6.0
+          key: printer.location
+          delay: '60'
+          history: 7d
+          value_type: TEXT
+          tags:
+            - tag: Application
+              value: 'Printer information'
+        - uuid: a9fd3e65673e4e439c6de915bb9fa1d5
+          name: 'Up Time'
+          type: SNMP_AGENT
+          snmp_oid: 1.3.6.1.2.1.1.3.0
+          key: printer.uptime
+          delay: '60'
+          history: 7d
+          units: uptime
+          preprocessing:
+            - type: MULTIPLIER
+              parameters:
+                - '0.01'
+          tags:
+            - tag: Application
+              value: 'Printer information'
+        - uuid: 77cfd06638764480ae0f4f19700ecfb7
+          name: 'Second Bias Transfer Roller %'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.9.1.12
+          key: second.btr.transfer.roller.percent
+          delay: '60'
+          history: 7d
+          status: DISABLED
+          units: '%'
+          tags:
+            - tag: Application
+              value: 'Consumables level %'
+        - uuid: 2212b92ef6c74160823f63580d68f700
+          name: 'Serial number'
+          type: SNMP_AGENT
+          snmp_oid: 1.3.6.1.2.1.43.5.1.1.17.1
+          key: serial.number
+          delay: '60'
+          history: 7d
+          value_type: TEXT
+          tags:
+            - tag: Application
+              value: 'Printer information'
+        - uuid: 88234b143704471689919694099de450
+          name: 'Transfer Belt Cleaner %'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.9.1.11
+          key: transfer.belt.cleaner.percent
+          delay: '60'
+          history: 7d
+          status: DISABLED
+          units: '%'
+          tags:
+            - tag: Application
+              value: 'Consumables level %'
+        - uuid: ac36d2fa90d048b48808ef81ae2742df
+          name: 'Tray 1 - Media current level'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.8.2.1.10.1.1
+          key: tray.1.media.current.level
+          delay: '60'
+          history: 7d
+          units: V
+          tags:
+            - tag: Application
+              value: 'Printer information'
+        - uuid: 371d0da848744a43af3487fe79cce9ef
+          name: 'Tray 1 - Media name'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.8.2.1.12.1.1
+          key: tray.1.media.name
+          delay: '300'
+          history: 7d
+          value_type: TEXT
+          tags:
+            - tag: Application
+              value: 'Printer information'
+        - uuid: dcab99a663004ed5ac8fed6b910744f3
+          name: 'Tray 2 - Media current level'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.8.2.1.10.1.2
+          key: tray.2.media.current.level
+          delay: '60'
+          history: 7d
+          units: V
+          tags:
+            - tag: Application
+              value: 'Printer information'
+        - uuid: 39039cae30b24f61a65fd2184d19d058
+          name: 'Tray 2 - Media name'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.8.2.1.12.1.2
+          key: tray.2.media.name
+          delay: '300'
+          history: 7d
+          value_type: TEXT
+          tags:
+            - tag: Application
+              value: 'Printer information'
+        - uuid: 391d4960093b499ca8de116b7fbb804e
+          name: 'Tray 5 manual - Media current level'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.8.2.1.10.1.3
+          key: tray.5.manual.media.current.level
+          delay: '60'
+          history: 7d
+          units: V
+          tags:
+            - tag: Application
+              value: 'Printer information'
+        - uuid: bb3ff2b3791f4dcba01bad2737dc5ab4
+          name: 'Tray 5 manual - Media name'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.8.2.1.12.1.3
+          key: tray.5.manual.media.name
+          delay: '300'
+          history: 7d
+          value_type: TEXT
+          tags:
+            - tag: Application
+              value: 'Printer information'
+        - uuid: 842530b2c9d349a4ae27cdd48f4e2c96
+          name: 'Up Time Clear'
+          type: CALCULATED
+          key: up.time.Clear
+          delay: '60'
+          history: 7d
+          units: s
+          params: last(//printer.uptime)/100
+          tags:
+            - tag: Application
+              value: 'Printer information'
+        - uuid: d3cf9bf93bf54211a0f133e475396b0f
+          name: 'Waste Toner Container value'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.9.1.5
+          key: waste.toner.container.value
+          delay: '60'
+          history: 7d
+          value_type: FLOAT
+          tags:
+            - tag: Application
+              value: 'Consumables level %'
+          triggers:
+            - uuid: a8a5213639a74084b284636efce43cf3
+              expression: 'last(/Printer Xerox VercaLink C7020/waste.toner.container.value)> -3'
+              name: 'Закончился бункер R5'
+              priority: HIGH
+        - uuid: b677b4e415504f16a64c6ed6f789a542
+          name: 'Drum cartridge level % - yellow'
+          type: CALCULATED
+          key: yellow.cartridge.drum
+          delay: '60'
+          history: 7d
+          units: '%'
+          params: '100*last(//drum.yellow.now)/last(//drum.yellow.max)'
+          tags:
+            - tag: Application
+              value: 'Consumables level %'
+        - uuid: 1d1fc3d7854c424e903694bbc7bfe942
+          name: 'Cartridge toner level % - yellow'
+          type: CALCULATED
+          key: yellow.cartridge.toner
+          delay: '60'
+          history: 7d
+          units: '%'
+          params: '100*last(//ink.yellow.now)/last(//ink.yellow.max)'
+          tags:
+            - tag: Application
+              value: 'Consumables level %'
+        - uuid: 6833c62581ea41efbabb9b4884ab0f94
+          name: 'Type of cartridge - yellow'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.6.1.2
+          key: yellow.cartridge.type
+          delay: '21600'
+          history: 7d
+          value_type: TEXT
+          tags:
+            - tag: Application
+              value: 'Printer information'
+        - uuid: 5e7f92f0025f4191a597c770af7f8b8f
+          name: 'Type of drum - yellow'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.2.1.43.11.1.1.6.1.7
+          key: yellow.drum.type
+          delay: '21600'
+          history: 7d
+          value_type: TEXT
+          tags:
+            - tag: Application
+              value: 'Printer information'
+      tags:
+        - tag: class
+          value: printer
+        - tag: vendor
+          value: Xerox
+      dashboards:
+        - uuid: 24c4f79645e7404bbd16d94a419d6120
+          name: 'Toner level'
+          pages:
+            - widgets:
+                - type: itemhistory
+                  width: '18'
+                  fields:
+                    - type: ITEM
+                      name: columns.1.itemid
+                      value:
+                        host: 'Printer Xerox VercaLink C7020'
+                        key: black.cartridge.type
+                    - type: INTEGER
+                      name: columns.1.monospace_font
+                      value: '1'
+                    - type: STRING
+                      name: columns.1.name
+                      value: 'Type of cartridge - black'
+                    - type: STRING
+                      name: reference
+                      value: AAAAA
+                    - type: INTEGER
+                      name: show_as_html
+                      value: '0'
+                    - type: INTEGER
+                      name: show_lines
+                      value: '1'
+                    - type: INTEGER
+                      name: show_timestamp
+                      value: '1'
+                - type: graph
+                  'y': '2'
+                  width: '18'
+                  height: '6'
+                  fields:
+                    - type: GRAPH
+                      name: graphid
+                      value:
+                        host: 'Printer Xerox VercaLink C7020'
+                        name: 'Black toner level'
+                    - type: STRING
+                      name: reference
+                      value: AAAAE
+                    - type: INTEGER
+                      name: source_type
+                      value: '0'
+                - type: itemhistory
+                  x: '18'
+                  width: '18'
+                  fields:
+                    - type: ITEM
+                      name: columns.4.itemid
+                      value:
+                        host: 'Printer Xerox VercaLink C7020'
+                        key: cyan.cartridge.type
+                    - type: INTEGER
+                      name: columns.4.monospace_font
+                      value: '1'
+                    - type: STRING
+                      name: columns.4.name
+                      value: 'Type of cartridge - cyan'
+                    - type: STRING
+                      name: reference
+                      value: AAAAB
+                    - type: INTEGER
+                      name: show_as_html
+                      value: '0'
+                    - type: INTEGER
+                      name: show_lines
+                      value: '1'
+                    - type: INTEGER
+                      name: show_timestamp
+                      value: '1'
+                - type: graph
+                  x: '18'
+                  'y': '2'
+                  width: '18'
+                  height: '6'
+                  fields:
+                    - type: GRAPH
+                      name: graphid
+                      value:
+                        host: 'Printer Xerox VercaLink C7020'
+                        name: 'Cyan toner level'
+                    - type: STRING
+                      name: reference
+                      value: AAAAF
+                    - type: INTEGER
+                      name: source_type
+                      value: '0'
+                - type: itemhistory
+                  x: '36'
+                  width: '18'
+                  fields:
+                    - type: ITEM
+                      name: columns.20.itemid
+                      value:
+                        host: 'Printer Xerox VercaLink C7020'
+                        key: magenta.cartridge.type
+                    - type: INTEGER
+                      name: columns.20.monospace_font
+                      value: '1'
+                    - type: STRING
+                      name: columns.20.name
+                      value: 'Type of cartridge - magenta'
+                    - type: STRING
+                      name: reference
+                      value: AAAAC
+                    - type: INTEGER
+                      name: show_as_html
+                      value: '0'
+                    - type: INTEGER
+                      name: show_lines
+                      value: '1'
+                    - type: INTEGER
+                      name: show_timestamp
+                      value: '1'
+                - type: graph
+                  x: '36'
+                  'y': '2'
+                  width: '18'
+                  height: '6'
+                  fields:
+                    - type: GRAPH
+                      name: graphid
+                      value:
+                        host: 'Printer Xerox VercaLink C7020'
+                        name: 'Magenta toner level'
+                    - type: STRING
+                      name: reference
+                      value: AAAAG
+                    - type: INTEGER
+                      name: source_type
+                      value: '0'
+                - type: itemhistory
+                  x: '54'
+                  width: '18'
+                  fields:
+                    - type: ITEM
+                      name: columns.40.itemid
+                      value:
+                        host: 'Printer Xerox VercaLink C7020'
+                        key: yellow.cartridge.type
+                    - type: INTEGER
+                      name: columns.40.monospace_font
+                      value: '1'
+                    - type: STRING
+                      name: columns.40.name
+                      value: 'Type of cartridge - yellow'
+                    - type: STRING
+                      name: reference
+                      value: AAAAD
+                    - type: INTEGER
+                      name: show_as_html
+                      value: '0'
+                    - type: INTEGER
+                      name: show_lines
+                      value: '1'
+                    - type: INTEGER
+                      name: show_timestamp
+                      value: '1'
+                - type: graph
+                  x: '54'
+                  'y': '2'
+                  width: '18'
+                  height: '6'
+                  fields:
+                    - type: GRAPH
+                      name: graphid
+                      value:
+                        host: 'Printer Xerox VercaLink C7020'
+                        name: 'Yellow toner level'
+                    - type: STRING
+                      name: reference
+                      value: AAAAH
+                    - type: INTEGER
+                      name: source_type
+                      value: '0'
+  triggers:
+    - uuid: e6e8d0d8e5c849489296d9459f0cbf77
+      expression: |
+        last(/Printer Xerox VercaLink C7020/BlackCartridgeToner)<20 
+        and nodata(/Printer Xerox VercaLink C7020/black.cartridge.type,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+      name: 'Low cartridge toner - black'
+      priority: INFO
+      dependencies:
+        - name: 'Закончился черный картридж'
+          expression: |
+            last(/Printer Xerox VercaLink C7020/BlackCartridgeToner)=0 
+            and nodata(/Printer Xerox VercaLink C7020/black.cartridge.type,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+    - uuid: 4bdabfdd0c0b4dfaa9f608642a2af712
+      expression: |
+        last(/Printer Xerox VercaLink C7020/cyan.cartridge.toner)<20 
+        and nodata(/Printer Xerox VercaLink C7020/cyan.cartridge.type,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+      name: 'Low cartridge toner - cyan'
+      priority: INFO
+      dependencies:
+        - name: 'Закончился голубой картридж'
+          expression: |
+            last(/Printer Xerox VercaLink C7020/cyan.cartridge.toner)=0 and nodata(/Printer Xerox VercaLink C7020/cyan.cartridge.type,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+    - uuid: ea5bf96c9b4d492e98b5d402dfe058bc
+      expression: |
+        last(/Printer Xerox VercaLink C7020/magenta.cartridge.toner)<20 
+        and nodata(/Printer Xerox VercaLink C7020/magenta.cartridge.type,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+      name: 'Low cartridge toner - magenta'
+      priority: INFO
+      dependencies:
+        - name: 'Закончился пурпурный картридж'
+          expression: |
+            last(/Printer Xerox VercaLink C7020/magenta.cartridge.toner)=0 and nodata(/Printer Xerox VercaLink C7020/magenta.cartridge.type,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+    - uuid: 78b8981ea016492fbb92ec8242f96878
+      expression: |
+        last(/Printer Xerox VercaLink C7020/yellow.cartridge.toner)<20 
+        and nodata(/Printer Xerox VercaLink C7020/yellow.cartridge.type,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+      name: 'Low cartridge toner - yellow'
+      priority: INFO
+      dependencies:
+        - name: 'Закончился желтый картридж'
+          expression: |
+            last(/Printer Xerox VercaLink C7020/yellow.cartridge.toner)=0 
+            and nodata(/Printer Xerox VercaLink C7020/yellow.cartridge.type,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+    - uuid: e5551e9133e949ed89cad5c2578fa03c
+      expression: |
+        last(/Printer Xerox VercaLink C7020/drum.black.now)<20 
+        and nodata(/Printer Xerox VercaLink C7020/black.drum.type,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+      name: 'Low drum toner - black'
+      priority: INFO
+      dependencies:
+        - name: 'Закончился черный драм картридж'
+          expression: |
+            last(/Printer Xerox VercaLink C7020/drum.black.now)=0 
+            and nodata(/Printer Xerox VercaLink C7020/black.drum.type,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+    - uuid: 81a01b133c7d4f3fb686d0bd71a43723
+      expression: |
+        last(/Printer Xerox VercaLink C7020/drum.cyan.now)<20 
+        and nodata(/Printer Xerox VercaLink C7020/cyan.drum.type,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+      name: 'Low drum toner - cyan'
+      priority: INFO
+      dependencies:
+        - name: 'Закончился голубой драм картридж'
+          expression: |
+            last(/Printer Xerox VercaLink C7020/drum.cyan.now)=0 
+            and nodata(/Printer Xerox VercaLink C7020/cyan.drum.type,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+    - uuid: e7ff9da2e7684ed4ba9017425fc554a9
+      expression: |
+        last(/Printer Xerox VercaLink C7020/drum.magenta.now)<20 
+        and nodata(/Printer Xerox VercaLink C7020/magenta.drum.type,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+      name: 'Low drum toner - magenta'
+      priority: INFO
+      dependencies:
+        - name: 'Закончился пурпурный драм картридж'
+          expression: |
+            last(/Printer Xerox VercaLink C7020/drum.magenta.now)=0 and nodata(/Printer Xerox VercaLink C7020/magenta.drum.type,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+    - uuid: 5c711e3cedef4404967523eebe14c5cc
+      expression: |
+        last(/Printer Xerox VercaLink C7020/drum.yellow.now)<20 
+        and nodata(/Printer Xerox VercaLink C7020/yellow.drum.type,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+      name: 'Low drum toner - yellow'
+      priority: INFO
+      dependencies:
+        - name: 'Закончился желтый драм картридж'
+          expression: |
+            last(/Printer Xerox VercaLink C7020/drum.yellow.now)=0 
+            and nodata(/Printer Xerox VercaLink C7020/yellow.drum.type,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+    - uuid: 9bec9f8b03e54b30a28779fa16193e3c
+      expression: |
+        last(/Printer Xerox VercaLink C7020/drum.cyan.now)=0 
+        and nodata(/Printer Xerox VercaLink C7020/cyan.drum.type,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+      name: 'Закончился голубой драм картридж'
+      priority: HIGH
+    - uuid: 73145d2ee98d4e11b59edb44c5ac74c0
+      expression: |
+        last(/Printer Xerox VercaLink C7020/cyan.cartridge.toner)=0 and nodata(/Printer Xerox VercaLink C7020/cyan.cartridge.type,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+      name: 'Закончился голубой картридж'
+      priority: HIGH
+    - uuid: f3852b9d531549e296610fcdd02e9438
+      expression: |
+        last(/Printer Xerox VercaLink C7020/drum.yellow.now)=0 
+        and nodata(/Printer Xerox VercaLink C7020/yellow.drum.type,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+      name: 'Закончился желтый драм картридж'
+      priority: HIGH
+    - uuid: 660cc4484b514094a506695690d78dab
+      expression: |
+        last(/Printer Xerox VercaLink C7020/yellow.cartridge.toner)=0 
+        and nodata(/Printer Xerox VercaLink C7020/yellow.cartridge.type,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+      name: 'Закончился желтый картридж'
+      priority: HIGH
+    - uuid: a9ff2228d8484c33b6df76c175b74123
+      expression: |
+        last(/Printer Xerox VercaLink C7020/drum.magenta.now)=0 and nodata(/Printer Xerox VercaLink C7020/magenta.drum.type,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+      name: 'Закончился пурпурный драм картридж'
+      priority: HIGH
+    - uuid: 73e28c634d6148af9017595c01c1b92f
+      expression: |
+        last(/Printer Xerox VercaLink C7020/magenta.cartridge.toner)=0 and nodata(/Printer Xerox VercaLink C7020/magenta.cartridge.type,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+      name: 'Закончился пурпурный картридж'
+      priority: HIGH
+    - uuid: d5ee7eb081274b8bacf6a2e05969c0e7
+      expression: |
+        last(/Printer Xerox VercaLink C7020/drum.black.now)=0 
+        and nodata(/Printer Xerox VercaLink C7020/black.drum.type,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+      name: 'Закончился черный драм картридж'
+      priority: HIGH
+    - uuid: 6bfeac9b2b3f4935b411d57ddf488ca6
+      expression: |
+        last(/Printer Xerox VercaLink C7020/BlackCartridgeToner)=0 
+        and nodata(/Printer Xerox VercaLink C7020/black.cartridge.type,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+        and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+      name: 'Закончился черный картридж'
+      priority: HIGH
+    - uuid: ad9e417876e44503ba785f0b80a9c4f6
+      expression: |
+        last(/Printer Xerox VercaLink C7020/cyan.cartridge.toner) > 90 
+        and 
+        last(/Printer Xerox VercaLink C7020/cyan.cartridge.toner,#2) < 20
+        and 
+        nodata(/Printer Xerox VercaLink C7020/cyan.cartridge.type,3w)=0 
+        and 
+        nodata(/Printer Xerox VercaLink C7020/model,3w)=0 
+        and 
+        nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0 
+        and 
+        nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+      name: 'Замена голубого картриджа'
+      priority: INFO
+      dependencies:
+        - name: 'Закончился голубой картридж'
+          expression: |
+            last(/Printer Xerox VercaLink C7020/cyan.cartridge.toner)=0 and nodata(/Printer Xerox VercaLink C7020/cyan.cartridge.type,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+    - uuid: 476adb83ff4a437c9a33daa879877315
+      expression: |
+        last(/Printer Xerox VercaLink C7020/yellow.cartridge.toner) > 90 
+        and 
+        last(/Printer Xerox VercaLink C7020/yellow.cartridge.toner,#2) < 20
+        and 
+        nodata(/Printer Xerox VercaLink C7020/yellow.cartridge.type,3w)=0 
+        and 
+        nodata(/Printer Xerox VercaLink C7020/model,3w)=0 
+        and 
+        nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0 
+        and 
+        nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+      name: 'Замена желтого картриджа'
+      priority: INFO
+      dependencies:
+        - name: 'Закончился желтый картридж'
+          expression: |
+            last(/Printer Xerox VercaLink C7020/yellow.cartridge.toner)=0 
+            and nodata(/Printer Xerox VercaLink C7020/yellow.cartridge.type,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+    - uuid: f489a6a829ec411ab3909f52f84de079
+      expression: |
+        last(/Printer Xerox VercaLink C7020/magenta.cartridge.toner) > 90 
+        and 
+        last(/Printer Xerox VercaLink C7020/magenta.cartridge.toner,#2) < 20
+        and 
+        nodata(/Printer Xerox VercaLink C7020/magenta.cartridge.type,3w)=0 
+        and 
+        nodata(/Printer Xerox VercaLink C7020/model,3w)=0 
+        and 
+        nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0 
+        and 
+        nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+      name: 'Замена пурпурного катриджа'
+      priority: INFO
+      dependencies:
+        - name: 'Закончился пурпурный картридж'
+          expression: |
+            last(/Printer Xerox VercaLink C7020/magenta.cartridge.toner)=0 and nodata(/Printer Xerox VercaLink C7020/magenta.cartridge.type,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+    - uuid: 1d86fd002e784ab2b3e751526c17ed0c
+      expression: |
+        last(/Printer Xerox VercaLink C7020/BlackCartridgeToner) > 90 
+        and 
+        last(/Printer Xerox VercaLink C7020/BlackCartridgeToner,#2) < 20
+        and 
+        nodata(/Printer Xerox VercaLink C7020/black.cartridge.type,3w)=0 
+        and 
+        nodata(/Printer Xerox VercaLink C7020/model,3w)=0 
+        and 
+        nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0 
+        and 
+        nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+      name: 'Замена черного катриджа'
+      priority: INFO
+      dependencies:
+        - name: 'Закончился черный картридж'
+          expression: |
+            last(/Printer Xerox VercaLink C7020/BlackCartridgeToner)=0 
+            and nodata(/Printer Xerox VercaLink C7020/black.cartridge.type,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/model,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/printer.location,3w)=0
+            and nodata(/Printer Xerox VercaLink C7020/serial.number,3w)=0
+  graphs:
+    - uuid: 5b22ca4936cb47cca10b73163cc577d1
+      name: 'Black toner level'
+      width: '200'
+      ymin_type_1: FIXED
+      ymax_type_1: FIXED
+      graph_items:
+        - drawtype: GRADIENT_LINE
+          color: '000000'
+          item:
+            host: 'Printer Xerox VercaLink C7020'
+            key: BlackCartridgeToner
+    - uuid: fc40d97547504367af20f5482278dd8f
+      name: 'Cyan toner level'
+      width: '200'
+      ymin_type_1: FIXED
+      ymax_type_1: FIXED
+      graph_items:
+        - drawtype: GRADIENT_LINE
+          color: 00DDDD
+          item:
+            host: 'Printer Xerox VercaLink C7020'
+            key: cyan.cartridge.toner
+    - uuid: 0b4f2847d6fa48b6b115db45d700aa63
+      name: 'Magenta toner level'
+      width: '200'
+      ymin_type_1: FIXED
+      ymax_type_1: FIXED
+      graph_items:
+        - drawtype: GRADIENT_LINE
+          color: DD00DD
+          item:
+            host: 'Printer Xerox VercaLink C7020'
+            key: magenta.cartridge.toner
+    - uuid: 1ac436c94e53458bb4d00b8fa435d267
+      name: 'Yellow toner level'
+      width: '200'
+      ymin_type_1: FIXED
+      ymax_type_1: FIXED
+      graph_items:
+        - drawtype: GRADIENT_LINE
+          color: DDDD00
+          item:
+            host: 'Printer Xerox VercaLink C7020'
+            key: yellow.cartridge.toner

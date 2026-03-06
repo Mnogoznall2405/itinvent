@@ -1,0 +1,40 @@
+[
+  {
+    "serial_number": "CAA36080584",
+    "model_name": "ПК DEXP Mars E155",
+    "employee_name": "Музоваткина Людмила Сергеевна",
+    "location": "Рыбачий Штаб",
+    "equipment_type": "Системный блок",
+    "description": "Рыбачий штаб секретчица",
+    "inventory_number": "",
+    "batch_number": "",
+    "ip_address": "",
+    "status": "В работе",
+    "branch": "Объект Вилючинск 583",
+    "company": "ООО \"Запсибгазпром-Газификация\"",
+    "timestamp": "2026-02-18T11:24:12.710185",
+    "additional_data": {
+      "db_name": "OBJ-ITINVENT"
+    },
+    "db_name": "OBJ-ITINVENT"
+  },
+  {
+    "serial_number": "5CG11684BG",
+    "model_name": "HP 470 G7",
+    "employee_name": "Замерзляк Анатолий Александрович",
+    "location": "Штаб 2",
+    "equipment_type": "Ноутбук",
+    "description": "Геодезия 1 этаж",
+    "inventory_number": "",
+    "batch_number": "",
+    "ip_address": "",
+    "status": "В работе",
+    "branch": "Объект Вилючинск 720",
+    "company": "ООО \"Запсибгазпром-Газификация\"",
+    "timestamp": "2026-02-18T11:27:34.760524",
+    "additional_data": {
+      "db_name": "OBJ-ITINVENT"
+    },
+    "db_name": "OBJ-ITINVENT"
+  }
+]

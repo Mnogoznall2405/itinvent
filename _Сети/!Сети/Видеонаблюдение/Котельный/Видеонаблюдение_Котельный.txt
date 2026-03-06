@@ -1,0 +1,5 @@
+10.105.69.250 –Регистратор admin\!QAZ@WSX
+http://10.105.69.168 –Мачта Admin\zotw
+http://10.105.69.166 –Столовая admin\OnonJak2
+http://10.105.69.111/ - Штаб omny\OnonJak2 
+http://10.105.69.115 – Штаб2 omny\OnonJak2

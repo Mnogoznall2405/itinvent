@@ -1,0 +1,29 @@
+[
+  {
+    "id": 1,
+    "username": "admin",
+    "email": "admin@itinvent.ru",
+    "full_name": "Administrator",
+    "is_active": true,
+    "role": "admin",
+    "telegram_id": null,
+    "created_at": "2026-02-16T09:43:59.628764+00:00",
+    "updated_at": "2026-02-16T09:43:59.628764+00:00",
+    "password_hash": "UZ4To5DwrOGhZMYj1HoGbG+mxXf8foZPDVgmjiyv2UQ=",
+    "password_salt": "pE4L3WljWvutID0KutlW+w=="
+  },
+  {
+    "id": 2,
+    "username": "user",
+    "email": "user@itinvent.ru",
+    "full_name": "Regular User",
+    "is_active": true,
+    "role": "admin",
+    "telegram_id": null,
+    "created_at": "2026-02-16T09:43:59.628764+00:00",
+    "updated_at": "2026-02-16T10:19:27.248994+00:00",
+    "password_hash": "JMtD6xfrsGkFD2A6ZFyg7Y8f1+VN1HwCMW9y/Yg0IzM=",
+    "password_salt": "8dkgl1Arl6lVcmSc2fG7Jw==",
+    "assigned_database": null
+  }
+]

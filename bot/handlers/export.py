@@ -16,11 +16,25 @@ from bot.utils.keyboards import create_main_menu_keyboard
 from bot.database_manager import database_manager
 from bot.equipment_data_manager import EquipmentDataManager
 from bot.email_sender import send_export_email
+from bot.local_json_store import get_store, load_json_data
 
 logger = logging.getLogger(__name__)
 
 # Глобальный менеджер данных
 equipment_manager = EquipmentDataManager()
+
+
+def _log_sqlite_export_source(file_path: str, rows_count: int) -> None:
+    try:
+        store = get_store()
+        logger.info(
+            "[EXPORT] source=sqlite db_path=%s file=%s rows=%s",
+            store.db_path,
+            file_path,
+            rows_count,
+        )
+    except Exception as exc:
+        logger.warning("[EXPORT] source logging failed file=%s error=%s", file_path, exc)
 
 
 @require_user_access
@@ -571,11 +585,10 @@ def export_cartridges_to_excel(only_new: bool = False, db_filter: str = None) ->
     try:
         file_path = Path("data/cartridge_replacements.json")
 
-        if not file_path.exists():
-            return None
-
-        with open(file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        data = load_json_data(str(file_path), default_content=[])
+        if not isinstance(data, list):
+            data = []
+        _log_sqlite_export_source(file_path.name, len(data))
 
         if not data:
             return None
@@ -799,11 +812,10 @@ async def export_battery_to_excel_structured(period: str = "all", db_filter: str
     try:
         file_path = Path("data/battery_replacements.json")
 
-        if not file_path.exists():
-            return None
-
-        with open(file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        data = load_json_data(str(file_path), default_content=[])
+        if not isinstance(data, list):
+            data = []
+        _log_sqlite_export_source(file_path.name, len(data))
 
         if not data:
             return None
@@ -917,11 +929,10 @@ async def export_pc_cleaning_to_excel_structured(period: str = "all", db_filter:
     try:
         file_path = Path("data/pc_cleanings.json")
 
-        if not file_path.exists():
-            return None
-
-        with open(file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        data = load_json_data(str(file_path), default_content=[])
+        if not isinstance(data, list):
+            data = []
+        _log_sqlite_export_source(file_path.name, len(data))
 
         if not data:
             return None
@@ -1055,11 +1066,10 @@ async def export_components_to_excel_structured(period: str = "all", db_filter: 
     try:
         file_path = Path("data/cartridge_replacements.json")
 
-        if not file_path.exists():
-            return None
-
-        with open(file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        data = load_json_data(str(file_path), default_content=[])
+        if not isinstance(data, list):
+            data = []
+        _log_sqlite_export_source(file_path.name, len(data))
 
         if not data:
             return None
@@ -1326,11 +1336,10 @@ async def export_pc_components_to_excel_structured(period: str = "all", db_filte
     try:
         file_path = Path("data/component_replacements.json")
 
-        if not file_path.exists():
-            return None
-
-        with open(file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        data = load_json_data(str(file_path), default_content=[])
+        if not isinstance(data, list):
+            data = []
+        _log_sqlite_export_source(file_path.name, len(data))
 
         if not data:
             return None

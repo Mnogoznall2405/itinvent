@@ -6,7 +6,6 @@
 и управляет данными о перемещениях техники между сотрудниками.
 """
 
-import json
 import csv
 import os
 import html
@@ -15,6 +14,7 @@ from typing import Dict, List, Optional, Any
 import logging
 
 from bot.services.validation import validate_serial_number
+from bot.local_json_store import load_json_data, save_json_data
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -25,61 +25,41 @@ class EquipmentDataManager:
     Класс для управления данными о ненайденном оборудовании и перемещениях.
     """
     
-    def __init__(self, 
-                 unfound_file: str = "data/unfound_equipment.json",
-                 transfers_file: str = "data/equipment_transfers.json",
-                 export_state_file: str = "data/export_state.json"):
-        """
-        Инициализация менеджера данных.
-        
-        Args:
-            unfound_file: Путь к файлу с данными о ненайденном оборудовании
-            transfers_file: Путь к файлу с данными о перемещениях
-        """
+    def __init__(
+        self,
+        unfound_file: str = "data/unfound_equipment.json",
+        transfers_file: str = "data/equipment_transfers.json",
+        export_state_file: str = "data/export_state.json",
+    ):
         self.unfound_file = unfound_file
         self.transfers_file = transfers_file
         self.export_state_file = export_state_file
-        
-        # Создаем файлы, если они не существуют
+        self.unfound_name = os.path.basename(self.unfound_file)
+        self.transfers_name = os.path.basename(self.transfers_file)
+        self.export_state_name = os.path.basename(self.export_state_file)
         self._ensure_files_exist()
-    
+
     def _ensure_files_exist(self):
-        """Создает файлы данных, если они не существуют."""
-        for file_path in [self.unfound_file, self.transfers_file]:
-            if not os.path.exists(file_path):
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    json.dump([], f, ensure_ascii=False, indent=2)
-                logger.info(f"Создан файл: {file_path}")
-        # Файл состояния экспорта
-        if not os.path.exists(self.export_state_file):
-            try:
-                with open(self.export_state_file, 'w', encoding='utf-8') as f:
-                    json.dump({}, f, ensure_ascii=False, indent=2)
-                logger.info(f"Создан файл: {self.export_state_file}")
-            except Exception as e:
-                logger.error(f"Ошибка создания файла состояния экспорта {self.export_state_file}: {e}")
-    
+        load_json_data(self.unfound_name, default_content=[])
+        load_json_data(self.transfers_name, default_content=[])
+        load_json_data(self.export_state_name, default_content={})
+
     def _load_data(self, file_path: str) -> List[Dict[str, Any]]:
-        """Загружает данные из JSON файла."""
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError) as e:
-            logger.error(f"Ошибка загрузки данных из {file_path}: {e}")
-            return []
-    
-    def _save_data(self, file_path: str, data: List[Dict[str, Any]]):
-        """Сохраняет данные в JSON файл."""
-        try:
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            logger.info(f"Данные сохранены в {file_path}")
+            data = load_json_data(os.path.basename(file_path), default_content=[])
+            return data if isinstance(data, list) else []
         except Exception as e:
-            logger.error(f"Ошибка сохранения данных в {file_path}: {e}")
+            logger.error(f"Error loading data from {file_path}: {e}")
+            return []
+
+    def _save_data(self, file_path: str, data: List[Dict[str, Any]]):
+        try:
+            save_json_data(os.path.basename(file_path), data)
+            logger.info(f"Data saved to {file_path}")
+        except Exception as e:
+            logger.error(f"Error saving data to {file_path}: {e}")
             raise
 
-
-    
     def validate_employee_name(self, name: str) -> bool:
         """
         Валидация ФИО сотрудника.
@@ -589,21 +569,22 @@ class EquipmentDataManager:
             'last_transfer': transfers_data[-1]['timestamp'] if transfers_data else None
         }
     def _load_export_state(self) -> Dict[str, Any]:
-        """Загрузка состояния последней выгрузки из JSON."""
+        """Load export checkpoint state from local store."""
         try:
-            with open(self.export_state_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            # Если файл отсутствует или повреждён — возвращаем пустое состояние
+            data = load_json_data(self.export_state_name, default_content={})
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            # Return empty state for missing/corrupted storage
             return {}
 
+
     def _save_export_state(self, state: Dict[str, Any]) -> None:
-        """Сохранение состояния последней выгрузки в JSON."""
+        """Save export checkpoint state to local store."""
         try:
-            with open(self.export_state_file, 'w', encoding='utf-8') as f:
-                json.dump(state, f, ensure_ascii=False, indent=2)
+            save_json_data(self.export_state_name, state)
         except Exception as e:
-            logger.error(f"Ошибка сохранения состояния экспорта: {e}")
+            logger.error(f"Error saving export checkpoint state: {e}")
+
 
     def _get_last_export_ts(self, data_type: str, db_name: Optional[str]) -> Optional[str]:
         """Вернуть ISO‑timestamp последней выгрузки для типа данных и базы."""

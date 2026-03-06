@@ -16,6 +16,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 # Импорты из модулей бота
 from bot.config import config
 from bot.handlers import start, help_command, cancel
+from local_store import get_local_store
 
 # Фильтр для исключения кнопок главного меню
 MAIN_MENU_BUTTONS_FILTER = (
@@ -178,7 +179,9 @@ def register_handlers(application: Application) -> None:
         states={
             States.FIND_WAIT_INPUT: [
                 MessageHandler(
-                    filters.PHOTO | (filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER),
+                    filters.PHOTO
+                    | filters.Document.IMAGE
+                    | (filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER),
                     find_by_serial_input
                 )
             ]
@@ -336,7 +339,9 @@ def register_handlers(application: Application) -> None:
         states={
             States.TRANSFER_WAIT_PHOTOS: [
                 CommandHandler("done", receive_transfer_photos),
-                MessageHandler(filters.PHOTO, receive_transfer_photos)
+                MessageHandler(filters.PHOTO, receive_transfer_photos),
+                MessageHandler(filters.Document.IMAGE, receive_transfer_photos),
+                MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, receive_transfer_photos)
             ],
             States.TRANSFER_NEW_EMPLOYEE: [
                 CallbackQueryHandler(handle_employee_suggestion_callback, pattern="^transfer_emp"),
@@ -458,6 +463,7 @@ def register_handlers(application: Application) -> None:
             ],
             States.WORK_BATTERY_SERIAL_INPUT: [
                 MessageHandler(filters.PHOTO, work_battery_serial_input),
+                MessageHandler(filters.Document.IMAGE, work_battery_serial_input),
                 MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, work_battery_serial_input)
             ],
             States.WORK_BATTERY_CONFIRMATION: [
@@ -465,6 +471,7 @@ def register_handlers(application: Application) -> None:
             ],
             States.WORK_PC_CLEANING_SERIAL_INPUT: [
                 MessageHandler(filters.PHOTO, work_pc_cleaning_serial_input),
+                MessageHandler(filters.Document.IMAGE, work_pc_cleaning_serial_input),
                 MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, work_pc_cleaning_serial_input)
             ],
             States.WORK_PC_CLEANING_CONFIRMATION: [
@@ -472,6 +479,7 @@ def register_handlers(application: Application) -> None:
             ],
             States.WORK_COMPONENT_SERIAL_INPUT: [
                 MessageHandler(filters.PHOTO, work_component_serial_input),
+                MessageHandler(filters.Document.IMAGE, work_component_serial_input),
                 MessageHandler(filters.TEXT & ~filters.COMMAND & ~MAIN_MENU_BUTTONS_FILTER, work_component_serial_input)
             ],
             States.WORK_COMPONENT_SELECTION: [
@@ -559,6 +567,11 @@ def main() -> None:
     logger.info("=" * 50)
 
     try:
+        try:
+            store = get_local_store()
+            logger.info(f"Local SQLite store: {store.db_path}")
+        except Exception as sqlite_error:
+            logger.warning(f"SQLite store init warning: {sqlite_error}")
         # Запускаем фоновые задачи обслуживания
         from bot.utils.maintenance import start_maintenance
         start_maintenance()

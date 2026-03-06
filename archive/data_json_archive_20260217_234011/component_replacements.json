@@ -1,0 +1,16 @@
+[
+  {
+    "serial_no": "PF12345",
+    "hw_serial_no": "",
+    "model_name": "Dell OptiPlex 7090",
+    "manufacturer": "",
+    "branch": "Офис Москва",
+    "location": "Офис 301",
+    "employee": "Иванов И.И.",
+    "inv_no": "",
+    "component_type": "hdd_ssd",
+    "component_name": "HDD/SSD (Накопитель)",
+    "db_name": "ITINVENT",
+    "timestamp": "2026-02-07T14:59:04.627946"
+  }
+]

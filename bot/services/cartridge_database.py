@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from difflib import SequenceMatcher
+from bot.local_json_store import load_json_data, save_json_data
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +46,8 @@ class CartridgeDatabase:
     def _load_database(self) -> Dict[str, PrinterCompatibility]:
         """Загружает базу данных картриджей"""
         try:
-            if self.data_file.exists():
-                with open(self.data_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
+            data = load_json_data(self.data_file.name, default_content={})
+            if isinstance(data, dict) and data:
 
                 # Конвертируем в объекты
                 result = {}
@@ -75,9 +75,8 @@ class CartridgeDatabase:
 
                 logger.info(f"Загружена база данных картриджей: {len(result)} принтеров")
                 return result
-            else:
-                logger.warning("Файл базы данных картриджей не найден, используем встроенные данные")
-                return self._get_builtin_database()
+            logger.warning("Cartridge database is empty in local store, using built-in defaults")
+            return self._get_builtin_database()
         except Exception as e:
             logger.error(f"Ошибка загрузки базы данных картриджей: {e}")
             return self._get_builtin_database()
@@ -329,8 +328,7 @@ class CartridgeDatabase:
                 }
 
             # Сохраняем
-            with open(self.data_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            save_json_data(self.data_file.name, data)
 
             logger.info(f"База данных картриджей сохранена: {len(data)} принтеров")
 

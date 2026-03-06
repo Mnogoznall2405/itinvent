@@ -1,0 +1,15 @@
+[
+  {
+    "branch": "г.Тюмень, Первомайская 19",
+    "location": "19_109",
+    "printer_model": "Canon imageRUNNER C3025i",
+    "component_type": "cartridge",
+    "component_color": "Черный",
+    "cartridge_model": "Canon C-EXV 54 Black",
+    "detection_source": "database",
+    "printer_is_color": true,
+    "cartridge_color": "Черный",
+    "db_name": "ITINVENT",
+    "timestamp": "2026-02-18T14:32:46.027402"
+  }
+]

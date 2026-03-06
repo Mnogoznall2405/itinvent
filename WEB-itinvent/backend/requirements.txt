@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+pyodbc
+python-jose
+pydantic[email]
+python-dotenv
+python-docx
+docx2pdf
+openpyxl
+openai
+pypdf
+reportlab
+PyMuPDF
+pysnmp
+cryptography
+exchangelib

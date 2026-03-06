@@ -88,6 +88,7 @@ exports/*.*
 data/*.db
 data/*.sqlite
 data/*.sqlite3
+data/scan_server/*.backup_*
 
 # Claude
 .claude/

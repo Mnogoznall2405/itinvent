@@ -1,0 +1,124 @@
+<mxfile host="app.diagrams.net" agent="Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0" version="28.0.6">
+  <diagram name="Страница — 1" id="lgzA2_Uvp-Hk9CrU4YCQ">
+    <mxGraphModel dx="3221" dy="467" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2339" pageHeight="3300" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="hIGlE8wDIPgeHprknek3-9" value="" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;" parent="1" vertex="1">
+          <mxGeometry x="510" y="4.890000000000001" width="180" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-17" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" parent="1" source="hIGlE8wDIPgeHprknek3-2" target="hIGlE8wDIPgeHprknek3-12" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-39" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" parent="1" source="hIGlE8wDIPgeHprknek3-2" target="hIGlE8wDIPgeHprknek3-38" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-2" value="&lt;div&gt;mikrotik rb2011&lt;/div&gt;" style="image;html=1;image=img/lib/clip_art/networking/Router_Icon_128x128.png" parent="1" vertex="1">
+          <mxGeometry x="210" y="217.5" width="80" height="72.5" as="geometry" />
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-3" value="" style="endArrow=classic;html=1;rounded=0;exitX=0.16;exitY=0.461;exitDx=0;exitDy=0;exitPerimeter=0;" parent="1" source="hIGlE8wDIPgeHprknek3-7" target="hIGlE8wDIPgeHprknek3-5" edge="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="530" y="40" as="sourcePoint" />
+            <mxPoint x="400" y="90" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-4" value="" style="endArrow=none;dashed=1;html=1;dashPattern=1 3;strokeWidth=2;rounded=0;exitX=0.722;exitY=0.162;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.441;entryY=0.952;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" source="hIGlE8wDIPgeHprknek3-5" target="hIGlE8wDIPgeHprknek3-7" edge="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="520" y="250.00000000000006" as="sourcePoint" />
+            <mxPoint x="800.24" y="117.44" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-6" value="" style="endArrow=classic;html=1;rounded=0;entryX=1;entryY=0.25;entryDx=0;entryDy=0;" parent="1" source="hIGlE8wDIPgeHprknek3-5" target="hIGlE8wDIPgeHprknek3-19" edge="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="390" y="220" as="sourcePoint" />
+            <mxPoint x="440" y="170" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-7" value="" style="shape=mxgraph.networks2.icon;aspect=fixed;fillColor=#EDEDED;strokeColor=#000000;gradientColor=#5B6163;network2IconShadow=1;network2bgFillColor=none;network2Icon=mxgraph.networks2.satellite_dish;network2IconXOffset=-0.0067;network2IconYOffset=0.0022;network2IconW=1.0065;network2IconH=0.9957;" parent="1" vertex="1">
+          <mxGeometry x="579.6700000000001" y="40" width="50.324999999999996" height="49.785000000000004" as="geometry" />
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-8" value="" style="shape=mxgraph.networks2.icon;aspect=fixed;fillColor=#EDEDED;strokeColor=#000000;gradientColor=#5B6163;network2IconShadow=1;network2bgFillColor=none;network2Icon=mxgraph.networks2.satellite;network2IconXOffset=0.0149;network2IconYOffset=-0.00046;network2IconW=1.1553;network2IconH=0.9741;" parent="1" vertex="1">
+          <mxGeometry x="710" width="57.765" height="48.705" as="geometry" />
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-11" value="" style="endArrow=none;dashed=1;html=1;dashPattern=1 3;strokeWidth=2;rounded=0;exitX=0.975;exitY=0.579;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.401;entryY=0.919;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" source="hIGlE8wDIPgeHprknek3-2" target="hIGlE8wDIPgeHprknek3-9" edge="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="380" y="183" as="sourcePoint" />
+            <mxPoint x="622" y="87" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-60" value="&lt;div&gt;l2p &lt;br&gt;&lt;/div&gt;&lt;div&gt;на Тюмень&lt;br&gt;&lt;/div&gt;" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" parent="hIGlE8wDIPgeHprknek3-11" vertex="1" connectable="0">
+          <mxGeometry x="-0.6624" y="-4" relative="1" as="geometry">
+            <mxPoint x="29" y="-10" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-5" value="" style="image;html=1;image=img/lib/clip_art/networking/Firewall_02_128x128.png" parent="1" vertex="1">
+          <mxGeometry x="410" y="70" width="80" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-12" value="&lt;div&gt;192.168.81.0/24 lan&lt;/div&gt;&lt;div&gt;&amp;nbsp;gw 192.168.81.1&lt;/div&gt;&lt;div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;/div&gt;" style="text;html=1;align=right;verticalAlign=middle;whiteSpace=wrap;rounded=0;" parent="1" vertex="1">
+          <mxGeometry x="-60" y="223.75" width="220" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-14" value="&lt;div&gt;NLD BG GW&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" style="text;strokeColor=none;fillColor=none;html=1;fontSize=13;fontStyle=1;verticalAlign=middle;align=center;" parent="1" vertex="1">
+          <mxGeometry x="200" y="210" width="100" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-19" value="" style="image;aspect=fixed;perimeter=ellipsePerimeter;html=1;align=center;shadow=0;dashed=0;spacingTop=3;image=img/lib/active_directory/modem.svg;" parent="1" vertex="1">
+          <mxGeometry x="320" y="136" width="50" height="41.5" as="geometry" />
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-21" value="&lt;div&gt;sat modem newtech mdm6000&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" parent="1" vertex="1">
+          <mxGeometry x="300" y="106" width="90" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-46" value="" style="group" parent="1" vertex="1" connectable="0">
+          <mxGeometry x="920" y="310" width="120" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-47" value="" style="image;html=1;image=img/lib/clip_art/networking/Wireless_Router_128x128.png" parent="hIGlE8wDIPgeHprknek3-46" vertex="1">
+          <mxGeometry width="80" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-48" value="&lt;div&gt;rb 4011&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" parent="hIGlE8wDIPgeHprknek3-46" vertex="1">
+          <mxGeometry x="60" y="10" width="60" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-51" value="&lt;div align=&quot;center&quot;&gt;1 kab RP&lt;br&gt;&lt;/div&gt;&lt;div align=&quot;center&quot;&gt;2 kab &lt;br&gt;&lt;/div&gt;&lt;div align=&quot;center&quot;&gt;3 телефонная будка&lt;br&gt;&lt;/div&gt;&lt;div align=&quot;center&quot;&gt;4 kab PTO&lt;br&gt;&lt;/div&gt;" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;align=center;" parent="1" vertex="1">
+          <mxGeometry x="-70" y="271" width="190" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-52" value="" style="endArrow=classic;html=1;rounded=0;entryX=0.912;entryY=0.468;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" source="hIGlE8wDIPgeHprknek3-38" target="hIGlE8wDIPgeHprknek3-51" edge="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="260" y="485" as="sourcePoint" />
+            <mxPoint x="310" y="435" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-53" value="&lt;div&gt;1-22 ports&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" parent="hIGlE8wDIPgeHprknek3-52" vertex="1" connectable="0">
+          <mxGeometry x="0.408" y="1" relative="1" as="geometry">
+            <mxPoint x="28" y="10" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-64" value="" style="endArrow=classic;html=1;rounded=0;entryX=1.033;entryY=0.223;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" source="hIGlE8wDIPgeHprknek3-19" target="hIGlE8wDIPgeHprknek3-2" edge="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="300" y="270" as="sourcePoint" />
+            <mxPoint x="350" y="220" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-65" value="wan" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" parent="hIGlE8wDIPgeHprknek3-64" vertex="1" connectable="0">
+          <mxGeometry x="0.197" relative="1" as="geometry">
+            <mxPoint x="11" y="-20" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-86" value="" style="group" parent="1" vertex="1" connectable="0">
+          <mxGeometry x="210" y="366" width="80" height="85" as="geometry" />
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-38" value="poe switch" style="image;html=1;image=img/lib/clip_art/networking/Switch_128x128.png" parent="hIGlE8wDIPgeHprknek3-86" vertex="1">
+          <mxGeometry y="5" width="80" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-85" value="-" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" parent="hIGlE8wDIPgeHprknek3-86" vertex="1">
+          <mxGeometry x="10" width="60" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-108" value="" style="endArrow=classic;startArrow=classic;html=1;rounded=0;exitX=1.063;exitY=0.42;exitDx=0;exitDy=0;exitPerimeter=0;" parent="1" source="hIGlE8wDIPgeHprknek3-109" target="hIGlE8wDIPgeHprknek3-47" edge="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="860" y="596.04" as="sourcePoint" />
+            <mxPoint x="910" y="546.04" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="hIGlE8wDIPgeHprknek3-109" value="&lt;div&gt;wifi SID:LAN75 vlan 75&lt;/div&gt;&lt;div&gt;wifi SID:NONE vlan 77&lt;/div&gt;&lt;div&gt;wifi SID:8balok-wifi vlan 166&lt;/div&gt;" style="html=1;strokeWidth=1;shadow=0;dashed=0;shape=mxgraph.ios7.misc.wifi;fillColor=#007AFF;strokeColor=none;buttonText=;strokeColor2=#222222;fontColor=#222222;fontSize=8;verticalLabelPosition=bottom;verticalAlign=top;align=center;sketch=0;" parent="1" vertex="1">
+          <mxGeometry x="1130" y="366" width="15" height="15" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

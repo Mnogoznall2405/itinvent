@@ -1,0 +1,74 @@
+[
+  {
+    "serial_no": "00125246",
+    "hw_serial_no": null,
+    "model_name": "СКАТ",
+    "manufacturer": "Арсенал+",
+    "branch": "г.Тюмень, Первомайская 19",
+    "location": "19_307",
+    "employee": "Братынкина Валерия Алексеевна",
+    "inv_no": 103156.0,
+    "db_name": "ITINVENT",
+    "timestamp": "2026-02-18T14:37:52.047246"
+  },
+  {
+    "serial_no": "FGMLV03",
+    "hw_serial_no": null,
+    "model_name": "Dell OptiPlex 3070",
+    "manufacturer": "Dell",
+    "branch": "г.Тюмень, Первомайская 19",
+    "location": "19_307",
+    "employee": "Атаманова Ольга Юрьевна",
+    "inv_no": 102806.0,
+    "db_name": "ITINVENT",
+    "timestamp": "2026-02-18T14:38:07.132299"
+  },
+  {
+    "serial_no": "czc7448jvy",
+    "hw_serial_no": null,
+    "model_name": "HP ProDesk 400 G4 SFF",
+    "manufacturer": "HP",
+    "branch": "г.Тюмень, Первомайская 19",
+    "location": "19_307",
+    "employee": "Шевченко Екатерина Анатольевна",
+    "inv_no": 102833.0,
+    "db_name": "ITINVENT",
+    "timestamp": "2026-02-18T14:38:33.638214"
+  },
+  {
+    "serial_no": "DB24933",
+    "hw_serial_no": null,
+    "model_name": "Dell Vostro 3888",
+    "manufacturer": "Dell",
+    "branch": "г.Тюмень, Первомайская 19",
+    "location": "19_206",
+    "employee": "Токарева Елена Александровна",
+    "inv_no": 100152.0,
+    "db_name": "ITINVENT",
+    "timestamp": "2026-02-18T14:38:49.212514"
+  },
+  {
+    "serial_no": "PC1NAEES",
+    "hw_serial_no": null,
+    "model_name": "Lenovo ThinkCentre M720q",
+    "manufacturer": "Lenovo",
+    "branch": "г.Тюмень, Первомайская 19",
+    "location": "19_307",
+    "employee": "Хомиченко Ксения Юрьевна",
+    "inv_no": 102775.0,
+    "db_name": "ITINVENT",
+    "timestamp": "2026-02-18T14:39:00.554886"
+  },
+  {
+    "serial_no": "00143665",
+    "hw_serial_no": null,
+    "model_name": "СКАТ (клавиатура и мышь)",
+    "manufacturer": "СКАТ",
+    "branch": "г.Тюмень, Первомайская 19",
+    "location": "19_206",
+    "employee": "Захарова Любовь Юрьевна",
+    "inv_no": 100353.0,
+    "db_name": "ITINVENT",
+    "timestamp": "2026-02-18T14:39:22.156198"
+  }
+]

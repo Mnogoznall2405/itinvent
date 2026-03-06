@@ -14,8 +14,8 @@ from telegram.error import TimedOut
 
 from bot.config import States, Messages, StorageKeys
 from bot.utils.decorators import require_user_access, handle_errors
-from bot.services.ocr_service import extract_serial_from_image
-from bot.services.validation import validate_employee_name
+from bot.services.input_identifier_service import detect_identifiers_from_image, detect_identifiers_from_text
+from bot.services.validation import validate_employee_name, validate_serial_number
 from bot.database_manager import database_manager
 from bot.equipment_data_manager import EquipmentDataManager
 
@@ -106,6 +106,8 @@ async def start_transfer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "📦 <b>Перемещение оборудования с актом</b>\n\n"
         "Отправьте фотографии оборудования (до 10 штук).\n"
         "Можете отправить несколько фото подряд.\n\n"
+        "Также можно отправить QR payload текстом или ввести серийный номер вручную.\n\n"
+        "💡 Для QR лучше отправлять изображение как файл (документ) без сжатия.\n\n"
         "ℹ️ <i>Оборудование будет автоматически сгруппировано по текущим владельцам.\n"
         "Для каждого старого сотрудника будет создан отдельный акт приема-передачи.</i>\n\n"
         "После загрузки всех фото отправьте команду /done для продолжения.",
@@ -132,10 +134,10 @@ async def receive_transfer_photos(update: Update, context: ContextTypes.DEFAULT_
         photos = context.user_data.get(StorageKeys.TEMP_PHOTOS, [])
         serials_data = context.user_data.get(StorageKeys.TEMP_SERIALS, [])
         
-        if not photos:
+        if not serials_data:
             await update.message.reply_text(
-                "❌ Вы не загрузили ни одной фотографии.\n"
-                "Отправьте хотя бы одно фото оборудования."
+                "❌ Вы не добавили ни одной единицы оборудования.\n"
+                "Отправьте фото/QR или текст с серийным номером."
             )
             return States.TRANSFER_WAIT_PHOTOS
         
@@ -146,7 +148,7 @@ async def receive_transfer_photos(update: Update, context: ContextTypes.DEFAULT_
         
         # Переходим к запросу нового сотрудника
         await update.message.reply_text(
-            f"✅ Загружено {len(photos)} фото.\n"
+            f"✅ Обработано изображений: {len(photos)}.\n"
             f"📦 Распознано единиц оборудования: {len(serials_data)}\n"
             f"👥 Будет создано актов: {groups_count}\n\n"
             "Теперь укажите ФИО нового сотрудника, которому будет передано оборудование:"
@@ -155,45 +157,210 @@ async def receive_transfer_photos(update: Update, context: ContextTypes.DEFAULT_
     
     # Обработка текстовых сообщений (не команд)
     if update.message and update.message.text and not update.message.text.startswith('/'):
-        await update.message.reply_text(
-            "Пожалуйста, отправьте фотографию оборудования или команду /done для завершения."
-        )
+        text_input = update.message.text.strip()
+        if not text_input:
+            await update.message.reply_text("❌ Пустой ввод. Отправьте QR/серийный номер или фото.")
+            return States.TRANSFER_WAIT_PHOTOS
+
+        from bot.config import config
+        max_photos = config.transfer.max_photos
+        current_items = context.user_data.get(StorageKeys.TEMP_SERIALS, [])
+        if len(current_items) >= max_photos:
+            await update.message.reply_text(
+                f"⚠️ Достигнут лимит единиц ({max_photos}).\n"
+                "Отправьте /done для продолжения."
+            )
+            return States.TRANSFER_WAIT_PHOTOS
+
+        user_id = update.effective_user.id if update.effective_user else None
+        source_label = "manual_text"
+        search_inv_no = None
+        search_serial_no = None
+
+        detection = detect_identifiers_from_text(text_input)
+        if detection.get("detector") == "qr":
+            search_inv_no = detection.get("inv_no")
+            search_serial_no = detection.get("serial_no")
+            source_label = "qr_text"
+            logger.info(
+                "[TRANSFER][QR] detected_from_text user_id=%s inv_no=%s serial_no=%s text_len=%s",
+                user_id,
+                search_inv_no or "-",
+                search_serial_no or "-",
+                len(text_input),
+            )
+        elif detection.get("detector") == "manual":
+            search_serial_no = detection.get("serial_no")
+            logger.info(
+                "[TRANSFER][QR] not_detected_from_text user_id=%s fallback_manual_serial=%s",
+                user_id,
+                search_serial_no or "-",
+            )
+
+        if (
+            not search_inv_no
+            and search_serial_no
+            and source_label == "manual_text"
+            and not validate_serial_number(search_serial_no)
+        ):
+            await update.message.reply_text(
+                "❌ Некорректный формат серийного номера.\n"
+                "Используйте только буквы, цифры и символы: - _ . :"
+            )
+            return States.TRANSFER_WAIT_PHOTOS
+
+        db = database_manager.create_database_connection(user_id)
+        if not db:
+            await update.message.reply_text("⚠️ Не удалось подключиться к базе данных.")
+            return States.TRANSFER_WAIT_PHOTOS
+
+        try:
+            equipment = {}
+
+            if search_inv_no:
+                logger.info("[TRANSFER] try_inv_lookup user_id=%s inv_no=%s", user_id, search_inv_no)
+                equipment = db.find_by_inventory_number(search_inv_no)
+                logger.info("[TRANSFER] inv_lookup_result user_id=%s found=%s", user_id, bool(equipment))
+
+            if not equipment and search_serial_no:
+                logger.info("[TRANSFER] try_serial_lookup user_id=%s serial=%s", user_id, search_serial_no)
+                equipment = db.find_by_serial_number(search_serial_no)
+                logger.info("[TRANSFER] serial_lookup_result user_id=%s found=%s", user_id, bool(equipment))
+        except Exception as e:
+            lookup_value = search_inv_no or search_serial_no or "-"
+            logger.warning(f"Ошибка поиска оборудования {lookup_value}: {e}")
+            equipment = None
+        finally:
+            db.close_connection()
+
+        if equipment:
+            employee_name = equipment.get('EMPLOYEE_NAME') or 'Не указан'
+            if employee_name and employee_name != 'Не указан':
+                employee_name = employee_name.strip() or 'Не указан'
+
+            serial_to_save = (
+                equipment.get('SERIAL_NO')
+                or equipment.get('HW_SERIAL_NO')
+                or search_serial_no
+                or search_inv_no
+                or ""
+            )
+            search_target = search_inv_no or search_serial_no or serial_to_save
+
+            context.user_data[StorageKeys.TEMP_SERIALS].append({
+                'serial': serial_to_save,
+                'serial_input': search_target,
+                'current_employee': employee_name,
+                'equipment': equipment,
+                'search_source': source_label,
+            })
+
+            await update.message.reply_text(
+                f"✅ Оборудование найдено в базе!\n"
+                f"🔎 Поиск: <b>{search_target}</b>\n"
+                f"👤 Числится на: <b>{employee_name}</b>\n"
+                f"📦 Всего единиц: {len(context.user_data[StorageKeys.TEMP_SERIALS])}\n\n"
+                "Отправьте еще фото/QR/текст или /done для продолжения.",
+                parse_mode='HTML'
+            )
+        else:
+            target = search_inv_no or search_serial_no or "-"
+            await update.message.reply_text(
+                f"❌ Оборудование с номером <b>{target}</b> не найдено в базе.\n"
+                "Отправьте другой QR/номер.",
+                parse_mode='HTML'
+            )
         return States.TRANSFER_WAIT_PHOTOS
     
-    # Обработка фотографий
-    if update.message and update.message.photo:
+    # Обработка фотографий и изображений-документов
+    is_photo_message = bool(update.message and update.message.photo)
+    is_document_image_message = bool(
+        update.message
+        and update.message.document
+        and str(update.message.document.mime_type or "").startswith("image/")
+    )
+
+    if is_photo_message or is_document_image_message:
         try:
-            # Проверяем лимит фотографий
-            current_photos = context.user_data.get(StorageKeys.TEMP_PHOTOS, [])
+            # Проверяем лимит единиц оборудования
+            current_items = context.user_data.get(StorageKeys.TEMP_SERIALS, [])
             from bot.config import config
             max_photos = config.transfer.max_photos
             
-            if len(current_photos) >= max_photos:
+            if len(current_items) >= max_photos:
                 await update.message.reply_text(
-                    f"⚠️ Достигнут лимит фотографий ({max_photos}).\n"
+                    f"⚠️ Достигнут лимит единиц ({max_photos}).\n"
                     "Отправьте /done для продолжения."
                 )
                 return States.TRANSFER_WAIT_PHOTOS
             
-            # Получаем фото наилучшего качества
-            photo = update.message.photo[-1]
-            photo_file = await context.bot.get_file(photo.file_id)
+            source_kind = "photo"
+            source_label = "manual"
+            search_inv_no = None
+            search_serial_no = None
+
+            if is_photo_message:
+                photo = update.message.photo[-1]
+                incoming_file = await context.bot.get_file(photo.file_id)
+                file_id = photo.file_id
+                file_ext = ".jpg"
+            else:
+                source_kind = "document"
+                document = update.message.document
+                incoming_file = await context.bot.get_file(document.file_id)
+                file_id = document.file_id
+                original_name = str(document.file_name or "transfer_qr_image").strip()
+                file_ext = os.path.splitext(original_name)[1] or ".jpg"
+                logger.info(
+                    "[TRANSFER] received_document_image user_id=%s name=%s mime=%s size=%s",
+                    update.effective_user.id if update.effective_user else None,
+                    original_name,
+                    document.mime_type,
+                    document.file_size,
+                )
             
             await update.message.reply_text("🛠️ Фото обрабатывается, пожалуйста, подождите...")
             
-            # Создаем временный путь для сохранения фото
-            photo_path = f"temp_transfer_{photo.file_id}.jpg"
-            await photo_file.download_to_drive(photo_path)
-            
-            # Обрабатываем изображение для извлечения серийного номера
-            serial = await extract_serial_from_image(photo_path)
-            
-            # Если серийный номер не распознан — не используем фото
-            if not serial:
+            # Создаем временный путь для сохранения файла
+            photo_path = f"temp_transfer_{file_id}{file_ext}"
+            await incoming_file.download_to_drive(photo_path)
+
+            detection = await detect_identifiers_from_image(photo_path)
+            search_inv_no = detection.get("inv_no")
+            search_serial_no = detection.get("serial_no")
+            qr_payload_text = detection.get("qr_payload_text")
+
+            if detection.get("detector") == "qr":
+                source_label = f"qr_{source_kind}"
+                logger.info(
+                    "[TRANSFER][QR] detected_from_%s user_id=%s inv_no=%s serial_no=%s payload_len=%s",
+                    source_kind,
+                    update.effective_user.id if update.effective_user else None,
+                    search_inv_no or "-",
+                    search_serial_no or "-",
+                    len(qr_payload_text or ""),
+                )
+            elif detection.get("detector") == "ocr":
+                source_label = f"ocr_{source_kind}"
+                logger.info(
+                    "[TRANSFER][OCR] fallback_from_%s user_id=%s serial=%s",
+                    source_kind,
+                    update.effective_user.id if update.effective_user else None,
+                    search_serial_no or "-",
+                )
+            else:
+                logger.info(
+                    "[TRANSFER][QR] not_detected_from_%s user_id=%s",
+                    source_kind,
+                    update.effective_user.id if update.effective_user else None,
+                )
+
+            # Если идентификаторы не найдены - не используем файл.
+            if not search_inv_no and not search_serial_no:
                 cleanup_temp_file(photo_path)
                 await update.message.reply_text(
-                    "📷 Фото получено, но серийный номер не распознан.\n"
-                    "Фото не будет использовано. Отправьте другое фото."
+                    "📷 Файл получен, но QR/серийный номер не распознан.\n"
+                    "Файл не будет использован. Отправьте другое изображение."
                 )
                 return States.TRANSFER_WAIT_PHOTOS
             
@@ -210,11 +377,38 @@ async def receive_transfer_photos(update: Update, context: ContextTypes.DEFAULT_
                 return States.TRANSFER_WAIT_PHOTOS
             
             try:
-                # Поиск оборудования (автоматически пробует варианты O↔0)
-                equipment = db.find_by_serial_number(serial)
+                equipment = {}
 
+                # 1) Сначала точный поиск по инвентарному номеру из QR.
+                if search_inv_no:
+                    logger.info(
+                        "[TRANSFER] try_inv_lookup user_id=%s inv_no=%s",
+                        user_id,
+                        search_inv_no,
+                    )
+                    equipment = db.find_by_inventory_number(search_inv_no)
+                    logger.info(
+                        "[TRANSFER] inv_lookup_result user_id=%s found=%s",
+                        user_id,
+                        bool(equipment),
+                    )
+
+                # 2) Если по INV_NO не нашли - ищем по SERIAL_NO.
+                if not equipment and search_serial_no:
+                    logger.info(
+                        "[TRANSFER] try_serial_lookup user_id=%s serial=%s",
+                        user_id,
+                        search_serial_no,
+                    )
+                    equipment = db.find_by_serial_number(search_serial_no)
+                    logger.info(
+                        "[TRANSFER] serial_lookup_result user_id=%s found=%s",
+                        user_id,
+                        bool(equipment),
+                    )
             except Exception as e:
-                logger.warning(f"Ошибка поиска оборудования {serial}: {e}")
+                lookup_value = search_inv_no or search_serial_no or "-"
+                logger.warning(f"Ошибка поиска оборудования {lookup_value}: {e}")
                 equipment = None
             finally:
                 db.close_connection()
@@ -224,28 +418,39 @@ async def receive_transfer_photos(update: Update, context: ContextTypes.DEFAULT_
                 employee_name = equipment.get('EMPLOYEE_NAME') or 'Не указан'
                 if employee_name and employee_name != 'Не указан':
                     employee_name = employee_name.strip() or 'Не указан'
+
+                serial_to_save = (
+                    equipment.get('SERIAL_NO')
+                    or equipment.get('HW_SERIAL_NO')
+                    or search_serial_no
+                    or search_inv_no
+                    or ""
+                )
+                search_target = search_inv_no or search_serial_no or serial_to_save
                 
                 context.user_data[StorageKeys.TEMP_PHOTOS].append(photo_path)
                 context.user_data[StorageKeys.TEMP_SERIALS].append({
-                    'serial': equipment.get('SERIAL_NO', serial),  # Используем реальный серийный номер из БД
-                    'serial_input': serial,  # Сохраняем OCR-номер для информации
+                    'serial': serial_to_save,  # Используем реальный серийный номер из БД при наличии
+                    'serial_input': search_target,  # Сохраняем фактический идентификатор поиска
                     'current_employee': employee_name,
-                    'equipment': equipment
+                    'equipment': equipment,
+                    'search_source': source_label,
                 })
                 
                 await update.message.reply_text(
                     f"✅ Оборудование найдено в базе!\n"
-                    f"🔢 Серийный номер: <b>{serial}</b>\n"
+                    f"🔎 Поиск: <b>{search_target}</b>\n"
                     f"👤 Числится на: <b>{employee_name}</b>\n"
-                    f"📦 Всего фото: {len(context.user_data[StorageKeys.TEMP_PHOTOS])}\n\n"
-                    "Отправьте еще фото или /done для продолжения.",
+                    f"📦 Всего единиц: {len(context.user_data[StorageKeys.TEMP_SERIALS])}\n\n"
+                    "Отправьте еще фото/QR или /done для продолжения.",
                     parse_mode='HTML'
                 )
             else:
                 # Оборудование не найдено - не используем
                 cleanup_temp_file(photo_path)
+                target = search_inv_no or search_serial_no or "-"
                 await update.message.reply_text(
-                    f"❌ Оборудование с серийным номером <b>{serial}</b> не найдено в базе.\n"
+                    f"❌ Оборудование с номером <b>{target}</b> не найдено в базе.\n"
                     "Фото не будет использовано. Отправьте другое фото.",
                     parse_mode='HTML'
                 )
@@ -261,7 +466,7 @@ async def receive_transfer_photos(update: Update, context: ContextTypes.DEFAULT_
     
     # Если получено что-то другое
     await update.message.reply_text(
-        "Пожалуйста, отправьте фотографию оборудования или команду /done для завершения."
+        "Пожалуйста, отправьте фото, QR (фото/документ/текст), серийный номер или /done."
     )
     return States.TRANSFER_WAIT_PHOTOS
 

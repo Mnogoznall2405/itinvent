@@ -1,0 +1,40 @@
+[
+  {
+    "serial_no": "N02C1069R00185",
+    "hw_serial_no": null,
+    "model_name": "Ippon Back Verso 800",
+    "manufacturer": "Ippon",
+    "branch": "Офис Санкт-Петербург",
+    "location": "4-304-ИТ",
+    "employee": null,
+    "inv_no": 103314.0,
+    "db_name": "SPB-ITINVENT",
+    "timestamp": "2026-01-27T15:05:17.033406"
+  },
+  {
+    "serial_no": "N06610K9H00076",
+    "hw_serial_no": null,
+    "model_name": "Ippon Smart Power Pro II Euro 1600",
+    "manufacturer": "Ippon",
+    "branch": "Офис Санкт-Петербург",
+    "location": "4-304-ИТ",
+    "employee": "Николаев Михаил Сергеевич",
+    "inv_no": 103024.0,
+    "db_name": "SPB-ITINVENT",
+    "timestamp": "2026-01-27T15:09:40.226924"
+  },
+  {
+    "serial_no": "320139AZ30002269",
+    "serial_number": "320139AZ30002269",
+    "hw_serial_no": "",
+    "model_name": "CyberPower UT650EG",
+    "manufacturer": "CyberPower",
+    "inv_no": "100163",
+    "branch": "г.Тюмень, Первомайская 21",
+    "location": "21_100/1",
+    "employee": "Самков Владимир Сергеевич",
+    "timestamp": "2026-02-16T11:50:10.511658",
+    "db_name": "ITINVENT",
+    "additional_data": {}
+  }
+]

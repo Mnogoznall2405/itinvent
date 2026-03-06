@@ -4,13 +4,12 @@
 Сервис для определения цветности принтера через LLM с кэшированием результатов
 """
 
-import json
 import logging
-from pathlib import Path
 from typing import Optional, Dict, Any
 from openai import OpenAI
 
 from bot.config import config
+from bot.local_json_store import load_json_data, save_json_data
 
 logger = logging.getLogger(__name__)
 
@@ -38,37 +37,25 @@ class PrinterColorDetector:
             self.client = None
     
     def _load_cache(self) -> Dict[str, bool]:
-        """
-        Загружает кэш из файла
-        
-        Возвращает:
-            Dict[str, bool]: Словарь {модель_принтера: is_color}
-        """
+        """Load printer color cache from local store."""
         try:
-            cache_path = Path(PRINTER_CACHE_FILE)
-            if cache_path.exists():
-                with open(cache_path, 'r', encoding='utf-8') as f:
-                    cache_data = json.load(f)
-                    logger.info(f"Загружен кэш принтеров: {len(cache_data)} записей")
-                    return cache_data
+            cache_data = load_json_data(PRINTER_CACHE_FILE, default_content={})
+            if isinstance(cache_data, dict):
+                logger.info(f"Loaded printer cache entries: {len(cache_data)}")
+                return cache_data
         except Exception as e:
-            logger.error(f"Ошибка загрузки кэша принтеров: {e}")
-        
+            logger.error(f"Failed to load printer cache: {e}")
+
         return {}
-    
+
     def _save_cache(self) -> None:
-        """Сохраняет кэш в файл"""
+        """Persist printer color cache to local store."""
         try:
-            # Создаем директорию если не существует
-            Path("data").mkdir(exist_ok=True)
-            
-            with open(PRINTER_CACHE_FILE, 'w', encoding='utf-8') as f:
-                json.dump(self.cache, f, ensure_ascii=False, indent=2)
-            
-            logger.info(f"Кэш принтеров сохранен: {len(self.cache)} записей")
+            save_json_data(PRINTER_CACHE_FILE, self.cache)
+            logger.info(f"Saved printer cache entries: {len(self.cache)}")
         except Exception as e:
-            logger.error(f"Ошибка сохранения кэша принтеров: {e}")
-    
+            logger.error(f"Failed to save printer cache: {e}")
+
     def _normalize_printer_model(self, model: str) -> str:
         """
         Нормализует название модели принтера для кэширования
